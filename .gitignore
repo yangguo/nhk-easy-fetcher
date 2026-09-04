@@ -1,0 +1,27 @@
+# Python build and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+dist/
+build/
+*.egg-info/
+.venv/
+
+# Local configuration, credentials, state, and fetched NHK content
+.env
+.nhk-easy-fetcher/
+nhk-easy-output/
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-shm
+*.sqlite3-wal
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/

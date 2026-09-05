@@ -35,6 +35,7 @@ class FetchConfig(BaseModel):
 
 class DiscoveryConfig(BaseModel):
     sitemap_url: str = "https://news.web.nhk/news/easy/sitemap/sitemap.xml"
+    top_list_url: str = "https://news.web.nhk/news/easy/top-list.json"
     lookback_days: int = 3
 
 

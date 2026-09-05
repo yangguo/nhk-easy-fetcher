@@ -75,6 +75,10 @@ def fetch_cmd(
         str,
         typer.Option("--format", help="Comma-separated: markdown,json,text,html"),
     ] = "markdown,json,text",
+    audio: Annotated[
+        str,
+        typer.Option("--audio", help="Audio mode: off, m4a, mp3, manifest"),
+    ] = "off",
     max_articles: Annotated[int, typer.Option("--max-articles")] = 1,
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
     allow_partial: Annotated[bool, typer.Option("--allow-partial")] = False,
@@ -103,6 +107,10 @@ def fetch_cmd(
     if cookie_jar is not None:
         config.auth.provider = "cookie_jar"
         config.auth.cookie_jar_path = cookie_jar.expanduser().resolve()
+    if audio not in {"off", "m4a", "mp3", "manifest"}:
+        console.print(f"[red]Unknown audio mode: {audio}[/red]")
+        raise typer.Exit(2)
+    config.audio.mode = audio  # type: ignore[assignment]
 
     target_date: date | None = None
     if date_arg == "today":
@@ -140,6 +148,7 @@ def fetch_cmd(
 def fetch_latest_cmd(
     output: Annotated[Path | None, typer.Option("--output")] = None,
     formats: Annotated[str, typer.Option("--format")] = "markdown,json,text",
+    audio: Annotated[str, typer.Option("--audio")] = "off",
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
     auth: Annotated[str | None, typer.Option("--auth")] = None,
     cookie_jar: Annotated[Path | None, typer.Option("--cookie-jar")] = None,
@@ -151,6 +160,7 @@ def fetch_latest_cmd(
         latest=True,
         output=output,
         formats=formats,
+        audio=audio,
         max_articles=1,
         dry_run=dry_run,
         allow_partial=False,
@@ -187,9 +197,7 @@ def status_cmd(
         ).fetchall()
 
     if as_json:
-        payload = [
-            {"article_id": r[0], "status": r[1], "completed_at": r[2]} for r in rows
-        ]
+        payload = [{"article_id": r[0], "status": r[1], "completed_at": r[2]} for r in rows]
         console.print(json.dumps(payload))
     else:
         table = Table(title=f"Articles in {out}")

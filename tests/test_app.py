@@ -22,9 +22,9 @@ def test_run_skips_known_complete_article_and_fetches_only_new_article(tmp_path:
 
     with respx.mock:
         respx.get(config.discovery.sitemap_url).respond(200, text=sitemap)
-        respx.get(
-            "https://news.web.nhk/news/easy/ne2026090512345/ne2026090512345.html"
-        ).respond(200, text=classic)
+        respx.get("https://news.web.nhk/news/easy/ne2026090512345/ne2026090512345.html").respond(
+            200, text=classic
+        )
 
         first = app.fetch_latest()
         second = app.fetch_latest()

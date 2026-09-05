@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from selectolax.parser import HTMLParser, Node
 
+from nhk_easy_fetcher.article_ids import extract_article_id
 from nhk_easy_fetcher.errors import FullContentUnavailable, ParseSuspect
 from nhk_easy_fetcher.models import (
     ArticleRecord,
@@ -96,11 +97,6 @@ def _parse_date(tree: HTMLParser, tz: str = "Asia/Tokyo") -> datetime | None:
         return None
 
 
-def _extract_article_id(source_url: str) -> str | None:
-    match = re.search(r"/(ne\d{13})/\1\.html", source_url)
-    return match.group(1) if match else None
-
-
 def parse_complete_article(
     html: str,
     *,
@@ -133,7 +129,7 @@ def parse_complete_article(
     if not title.plain or not paragraphs:
         raise ParseSuspect("Title or body paragraphs are empty")
 
-    article_id = _extract_article_id(source_url)
+    article_id = extract_article_id(source_url)
     if article_id is None:
         raise ParseSuspect(f"Could not extract article ID from {source_url}")
 

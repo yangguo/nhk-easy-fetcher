@@ -258,7 +258,9 @@ Expected: import failure.
 ARTICLE_RE = re.compile(r"/easy/(ne\d{13})/\1\.html$")
 
 
-def discover_article_urls(sitemap_xml: str, only_date: date | None = None) -> list[DiscoveredArticle]:
+def discover_article_urls(
+    sitemap_xml: str, only_date: date | None = None
+) -> list[DiscoveredArticle]:
     root = ElementTree.fromstring(sitemap_xml)
     urls = []
     for loc in root.findall(".//{*}loc"):
@@ -298,7 +300,9 @@ from nhk_easy_fetcher.parser import parse_complete_article
 
 
 def test_parser_keeps_ruby_and_builds_plain_and_reading_views(load_fixture):
-    article = parse_complete_article(load_fixture("classic_complete.html"), source_url="https://example.test/ne...")
+    article = parse_complete_article(
+        load_fixture("classic_complete.html"), source_url="https://example.test/ne..."
+    )
     assert article.title.plain == "漢字のニュース"
     assert article.paragraphs[0].plain == "漢字を読む。"
     assert article.paragraphs[0].with_readings == "漢字（かんじ）を読む。"
@@ -306,7 +310,9 @@ def test_parser_keeps_ruby_and_builds_plain_and_reading_views(load_fixture):
 
 def test_parser_rejects_partial_page(load_fixture):
     with pytest.raises(FullContentUnavailable):
-        parse_complete_article(load_fixture("next_partial.html"), source_url="https://example.test/ne...")
+        parse_complete_article(
+            load_fixture("next_partial.html"), source_url="https://example.test/ne..."
+        )
 ```
 
 **Step 2: Run to verify failure**
@@ -363,7 +369,9 @@ def test_401_is_not_retried_as_a_network_error():
 
 @respx.mock
 def test_503_is_retried_only_up_to_configured_limit():
-    route = respx.get("https://example.test/article").mock(side_effect=[httpx.Response(503), httpx.Response(200, text="ok")])
+    route = respx.get("https://example.test/article").mock(
+        side_effect=[httpx.Response(503), httpx.Response(200, text="ok")]
+    )
     assert client.get_text("https://example.test/article") == "ok"
     assert route.call_count == 2
 ```
@@ -378,8 +386,14 @@ Expected: import failure.
 
 ```python
 class SourceContractChanged(RuntimeError): ...
+
+
 class AuthorizationUnavailable(RuntimeError): ...
+
+
 class RateLimited(RuntimeError): ...
+
+
 class NetworkTransient(RuntimeError): ...
 
 
@@ -494,7 +508,11 @@ class AuthProvider(Protocol):
 
 
 class NoAuthProvider: ...
+
+
 class CookieJarProvider: ...
+
+
 class FixtureAuthProvider: ...
 ```
 
@@ -575,7 +593,9 @@ git commit -m "feat: resolve and validate optional HLS audio"
 **Step 1: Write an end-to-end offline test with fakes**
 
 ```python
-def test_run_skips_known_complete_article_and_fetches_only_new_article(tmp_path, fake_discovery, fake_client):
+def test_run_skips_known_complete_article_and_fetches_only_new_article(
+    tmp_path, fake_discovery, fake_client
+):
     app = FetchApplication(...)
     first = app.fetch_today()
     second = app.fetch_today()
@@ -628,7 +648,9 @@ git commit -m "feat: orchestrate idempotent local fetch runs"
 
 ```python
 def test_dry_run_does_not_create_output(runner, tmp_path):
-    result = runner.invoke(app, ["fetch", "--date", "2026-09-05", "--output", str(tmp_path), "--dry-run"])
+    result = runner.invoke(
+        app, ["fetch", "--date", "2026-09-05", "--output", str(tmp_path), "--dry-run"]
+    )
     assert result.exit_code == 0
     assert not (tmp_path / ".nhk-easy-fetcher").exists()
 

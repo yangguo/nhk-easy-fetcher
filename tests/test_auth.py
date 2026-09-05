@@ -37,6 +37,4 @@ def test_fixture_auth_provider() -> None:
 
 def test_cookie_jar_missing_file(tmp_path: Path) -> None:
     with pytest.raises(AuthorizationUnavailable):
-        CookieJarProvider(tmp_path / "missing.json").get_session(
-            datetime.now(tz=ZoneInfo("UTC"))
-        )
+        CookieJarProvider(tmp_path / "missing.json").get_session(datetime.now(tz=ZoneInfo("UTC")))

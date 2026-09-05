@@ -1,4 +1,3 @@
-
 from nhk_easy_fetcher.config import FetchConfig, load_config
 from nhk_easy_fetcher.models import ContentStatus, PageMode
 

@@ -10,9 +10,10 @@
 
 v0.1 vertical slice (this release):
 
-- sitemap-based article discovery;
+- sitemap-based article discovery (legacy `ne…` and current `YYYYMMDDde…` article IDs);
 - page-mode detection (`classic_complete` vs `next_partial`);
 - ruby-aware parsing and multi-format export;
+- optional HLS audio via `top-list.json` / page metadata (`--audio m4a|mp3|manifest`);
 - SQLite deduplication and atomic writes;
 - `CookieJarProvider` for user-owned NHK ONE session cookies;
 - offline test suite with synthetic fixtures.
@@ -35,6 +36,13 @@ nhk-easy fetch --latest --dry-run --output ~/NHK-Easy
 nhk-easy fetch-latest \
   --auth cookie_jar \
   --cookie-jar ~/.nhk-easy-fetcher/auth/cookies.json \
+  --output ~/NHK-Easy
+
+# With audio (requires auth + ffmpeg; see Audio section below)
+nhk-easy fetch-latest \
+  --auth cookie_jar \
+  --cookie-jar ~/.nhk-easy-fetcher/auth/cookies.json \
+  --audio m4a \
   --output ~/NHK-Easy
 
 # Offline probe (fixtures only)
@@ -61,6 +69,40 @@ Save a permission-restricted file (`chmod 600`):
 
 Export cookies from your browser after completing NHK ONE “ご利用にあたって” consent on [news.web.nhk](https://news.web.nhk/news/easy/). Do not commit this file.
 
+## Audio
+
+Voice URIs are resolved from article HTML when present, otherwise from authorized
+[`top-list.json`](https://news.web.nhk/news/easy/top-list.json) (`news_easy_voice_uri` field).
+
+HLS manifests are built as:
+
+```text
+https://media.vd.st.nhk/news/easy_audio/{stem}/index.m3u8
+```
+
+where `{stem}` is `news_easy_voice_uri` with its file extension removed.
+
+```console
+nhk-easy fetch-latest --audio off      # text only (default)
+nhk-easy fetch-latest --audio m4a      # AAC in M4A via ffmpeg re-encode
+nhk-easy fetch-latest --audio mp3      # MP3 via libmp3lame
+nhk-easy fetch-latest --audio manifest # save manifest only
+```
+
+### CDN access and Akamai tokens
+
+The bare HLS CDN URL (`media.vd.st.nhk`) returns **HTTP 403** without a valid Akamai
+`hdnts` query token. NHK's web player mints this token using the `z_at` session cookie.
+
+**Current limitation (TODO):** this release resolves the manifest URL and passes session
+cookies to `ffmpeg`, but does **not** mint `hdnts` tokens from `z_at`. If your cookie jar
+already includes a precomputed `hdnts` value, it will be appended automatically. Otherwise
+audio download may fail with a clear `audio_unavailable` message while text export still
+succeeds (exit code 5).
+
+ffmpeg uses **re-encode** (`-c:a aac` / `libmp3lame`), not `-c copy`, because EASY audio
+is HE-AAC and direct remux is unreliable.
+
 ## Output layout
 
 ```text
@@ -71,6 +113,7 @@ Export cookies from your browser after completing NHK ONE “ご利用にあた�
         ├── article.json
         ├── article.md
         ├── article.txt
+        ├── audio.m4a               # when --audio m4a succeeds
         └── checksums.sha256
 ```
 
@@ -81,6 +124,7 @@ Export cookies from your browser after completing NHK ONE “ご利用にあた�
 | `nhk-easy fetch --latest` | Fetch newest sitemap article |
 | `nhk-easy fetch-latest` | Alias for `fetch --latest` |
 | `nhk-easy fetch --date today` | Fetch articles for a date |
+| `nhk-easy fetch --audio m4a` | Download audio (needs auth + ffmpeg) |
 | `nhk-easy status --output PATH` | Show local SQLite state |
 | `nhk-easy probe` | Offline fixture probe |
 | `nhk-easy probe --live` | Live sitemap + one-page structural probe |

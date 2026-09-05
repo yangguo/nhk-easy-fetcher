@@ -9,6 +9,7 @@ from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 
+from nhk_easy_fetcher.audio import AudioDownloadResult
 from nhk_easy_fetcher.errors import LocalWriteFailed
 from nhk_easy_fetcher.models import ArticleRecord, ContentStatus
 
@@ -112,7 +113,13 @@ class StateStore:
             ).fetchone()
             return row[0] if row else None
 
-    def save_complete(self, article: ArticleRecord, formats: set[str]) -> Path:
+    def save_complete(
+        self,
+        article: ArticleRecord,
+        formats: set[str],
+        *,
+        audio_result: AudioDownloadResult | None = None,
+    ) -> Path:
         out_dir = self.article_dir(article.article_id, article.published_at)
         out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -133,6 +140,10 @@ class StateStore:
             html_path = out_dir / "article.html"
             _atomic_write(html_path, render_html(article))
             written["html"] = html_path
+
+        if audio_result is not None and audio_result.output_path.exists():
+            kind = f"audio_{audio_result.format}"
+            written[kind] = audio_result.output_path
 
         checksum_lines: list[str] = []
         for kind, path in written.items():
@@ -207,7 +218,7 @@ def render_html(article: ArticleRecord) -> str:
     for paragraph in article.paragraphs:
         body_parts.append(f"<p>{paragraph.html_with_ruby}</p>")
     return (
-        "<!DOCTYPE html><html lang=\"ja\"><head>"
-        f"<meta charset=\"utf-8\"><title>{article.title.plain}</title>"
+        '<!DOCTYPE html><html lang="ja"><head>'
+        f'<meta charset="utf-8"><title>{article.title.plain}</title>'
         "</head><body>" + "\n".join(body_parts) + "</body></html>"
     )

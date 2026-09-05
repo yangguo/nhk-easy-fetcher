@@ -92,16 +92,14 @@ nhk-easy fetch-latest --audio manifest # save manifest only
 ### CDN access and Akamai tokens
 
 The bare HLS CDN URL (`media.vd.st.nhk`) returns **HTTP 403** without a valid Akamai
-`hdnts` query token. NHK's web player mints this token using the `z_at` session cookie.
+`hdnts` query token. The fetcher mints this token via
+`https://mediatoken.web.nhk/v1/token` using `Authorization: Bearer {z_at}` from your
+cookie jar, then passes the **remote** tokenized manifest URL directly to `ffmpeg -i`.
 
-**Current limitation (TODO):** this release resolves the manifest URL and passes session
-cookies to `ffmpeg`, but does **not** mint `hdnts` tokens from `z_at`. If your cookie jar
-already includes a precomputed `hdnts` value, it will be appended automatically. Otherwise
-audio download may fail with a clear `audio_unavailable` message while text export still
-succeeds (exit code 5).
-
-ffmpeg uses **re-encode** (`-c:a aac` / `libmp3lame`), not `-c copy`, because EASY audio
-is HE-AAC and direct remux is unreliable.
+ffmpeg uses **re-encode** (`-c:a aac -b:a 64k` for M4A, `libmp3lame` for MP3), not
+`-c copy`, because EASY audio is HE-AAC. Local manifest files (if used) are rewritten
+with `hdnts` on segment lines and opened with
+`-protocol_whitelist file,http,https,tcp,tls,crypto`.
 
 ## Output layout
 

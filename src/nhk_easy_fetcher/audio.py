@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
+import httpx
+
+from nhk_easy_fetcher.client import DEFAULT_USER_AGENT
 from nhk_easy_fetcher.errors import AudioUnavailable
 
 HLS_AUDIO_BASE = "https://media.vd.st.nhk/news/easy_audio"
+MEDIATOKEN_URL = "https://mediatoken.web.nhk/v1/token"
 MANIFEST_MARKERS = ("#EXTM3U", "#EXT-X-")
+PROTOCOL_WHITELIST = "file,http,https,tcp,tls,crypto"
 
 
 class CommandRunner(Protocol):
@@ -61,10 +67,114 @@ def extract_hdnts_from_cookies(cookies: dict[str, str]) -> str | None:
         value = cookies.get(key)
         if value:
             return value
-    # z_at is required to mint hdnts in the NHK player, but minting is not implemented here.
-    if cookies.get("z_at"):
-        return None
     return None
+
+
+def _parse_mediatoken_response(payload: dict[str, object]) -> str:
+    error = payload.get("error")
+    if isinstance(error, dict):
+        message = error.get("message", "mediatoken request failed")
+        raise AudioUnavailable(f"mediatoken error: {message}")
+
+    for key in ("hdnts", "token"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+
+    data = payload.get("data")
+    if isinstance(data, dict):
+        for key in ("hdnts", "token"):
+            value = data.get(key)
+            if isinstance(value, str) and value:
+                return value
+
+    raise AudioUnavailable("mediatoken response missing hdnts/token")
+
+
+def mint_hdnts_token(
+    manifest_url: str,
+    z_at: str,
+    *,
+    post_json: Callable[..., httpx.Response] | None = None,
+) -> str:
+    """Mint an Akamai hdnts token for a manifest URL using the NHK mediatoken service."""
+    poster = post_json or httpx.post
+    response = poster(
+        MEDIATOKEN_URL,
+        json={"url": manifest_url},
+        headers={
+            "Authorization": f"Bearer {z_at}",
+            "Content-Type": "application/json",
+            "User-Agent": DEFAULT_USER_AGENT,
+        },
+        timeout=20,
+    )
+    if response.status_code in {401, 403}:
+        raise AudioUnavailable("mediatoken rejected authorization (check z_at cookie)")
+    if response.status_code >= 400:
+        raise AudioUnavailable(f"mediatoken HTTP {response.status_code}")
+    return _parse_mediatoken_response(response.json())
+
+
+def authorize_manifest_url(
+    manifest_url: str,
+    cookies: dict[str, str],
+    *,
+    post_json: Callable[..., httpx.Response] | None = None,
+) -> str:
+    """Return a manifest URL with hdnts appended, minting via mediatoken when needed."""
+    hdnts = extract_hdnts_from_cookies(cookies)
+    if not hdnts:
+        z_at = cookies.get("z_at")
+        if z_at:
+            hdnts = mint_hdnts_token(manifest_url, z_at, post_json=post_json)
+    return append_hdnts_token(manifest_url, hdnts)
+
+
+def is_remote_manifest(manifest_input: str) -> bool:
+    return manifest_input.startswith("http://") or manifest_input.startswith("https://")
+
+
+def rewrite_local_manifest_with_hdnts(manifest_body: str, hdnts: str) -> str:
+    """Rewrite segment lines in a local playlist to include the hdnts query token."""
+    rewritten: list[str] = []
+    for line in manifest_body.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            separator = "&" if "?" in stripped else "?"
+            line = f"{stripped}{separator}hdnts={hdnts}"
+        rewritten.append(line)
+    return "\n".join(rewritten) + "\n"
+
+
+def prepare_ffmpeg_manifest_input(
+    manifest_url: str,
+    cookies: dict[str, str],
+    *,
+    output_dir: Path,
+    post_json: Callable[..., httpx.Response] | None = None,
+) -> tuple[str, bool]:
+    """Return ffmpeg manifest input and whether it is a remote URL."""
+    if is_remote_manifest(manifest_url):
+        authorized = authorize_manifest_url(manifest_url, cookies, post_json=post_json)
+        return authorized, True
+
+    manifest_path = Path(manifest_url)
+    if not manifest_path.exists():
+        raise AudioUnavailable(f"local manifest not found: {manifest_path}")
+
+    hdnts = extract_hdnts_from_cookies(cookies)
+    if not hdnts and cookies.get("z_at"):
+        raise AudioUnavailable(
+            "local manifest requires a precomputed hdnts cookie; mint tokens against the remote URL"
+        )
+
+    body = manifest_path.read_text(encoding="utf-8")
+    if hdnts:
+        body = rewrite_local_manifest_with_hdnts(body, hdnts)
+    temp_manifest = output_dir / "audio.input.m3u8.partial"
+    temp_manifest.write_text(body, encoding="utf-8")
+    return str(temp_manifest), False
 
 
 def build_ffmpeg_headers(
@@ -88,28 +198,38 @@ def ffmpeg_audio_codec(mode: str) -> tuple[str, str]:
 def build_ffmpeg_download_args(
     *,
     ffmpeg_path: str,
-    manifest_url: str,
+    manifest_input: str,
     output_path: Path,
     mode: str,
     headers: str,
+    is_remote: bool,
 ) -> list[str]:
     codec, _ = ffmpeg_audio_codec(mode)
-    return [
+    args = [
         ffmpeg_path,
         "-nostdin",
         "-y",
         "-loglevel",
         "error",
-        "-headers",
-        headers,
-        "-i",
-        manifest_url,
-        "-c:a",
-        codec,
-        "-b:a",
-        "128k",
-        str(output_path),
     ]
+    if not is_remote:
+        args.extend(["-protocol_whitelist", PROTOCOL_WHITELIST])
+    args.extend(
+        [
+            "-headers",
+            headers,
+            "-i",
+            manifest_input,
+            "-c:a",
+            codec,
+        ]
+    )
+    if mode == "m4a":
+        args.extend(["-b:a", "64k"])
+    elif mode == "mp3":
+        args.extend(["-b:a", "128k"])
+    args.append(str(output_path))
+    return args
 
 
 def download_audio(
@@ -119,17 +239,20 @@ def download_audio(
     mode: str,
     ffmpeg_path: str = "ffmpeg",
     cookies: dict[str, str] | None = None,
-    hdnts: str | None = None,
+    manifest_url: str | None = None,
     runner: CommandRunner | None = None,
-    keep_manifest: bool = False,
+    post_json: Callable[..., httpx.Response] | None = None,
 ) -> AudioDownloadResult:
     if mode not in {"m4a", "mp3", "manifest"}:
         raise AudioUnavailable(f"unsupported audio mode: {mode}")
 
-    manifest_url = resolve_hls_url(news_easy_voice_uri)
     cookie_map = cookies or {}
-    token = hdnts or extract_hdnts_from_cookies(cookie_map)
-    manifest_url = append_hdnts_token(manifest_url, token)
+    base_manifest = manifest_url or resolve_hls_url(news_easy_voice_uri)
+    authorized_manifest = authorize_manifest_url(
+        base_manifest,
+        cookie_map,
+        post_json=post_json,
+    )
 
     _, ext = ffmpeg_audio_codec(mode if mode != "manifest" else "m4a")
     if mode == "manifest":
@@ -139,20 +262,29 @@ def download_audio(
     output_final = output_dir / f"audio.{ext}"
 
     if mode == "manifest":
-        # Caller should fetch manifest separately; mark path for manifest-only mode.
         return AudioDownloadResult(
             output_path=output_final,
-            manifest_url=manifest_url,
+            manifest_url=authorized_manifest,
             format="manifest",
         )
+
+    manifest_input, is_remote = prepare_ffmpeg_manifest_input(
+        base_manifest,
+        cookie_map,
+        output_dir=output_dir,
+        post_json=post_json,
+    )
+    if is_remote:
+        manifest_input = authorized_manifest
 
     headers = build_ffmpeg_headers(cookies=cookie_map)
     args = build_ffmpeg_download_args(
         ffmpeg_path=ffmpeg_path,
-        manifest_url=manifest_url,
+        manifest_input=manifest_input,
         output_path=output_path,
         mode=mode,
         headers=headers,
+        is_remote=is_remote,
     )
 
     proc_runner = runner or SubprocessRunner()
@@ -162,8 +294,8 @@ def download_audio(
         stderr = exc.stderr or ""
         if "403" in stderr or "401" in stderr:
             raise AudioUnavailable(
-                "HLS download rejected (403/401). Akamai hdnts token is required; "
-                "see README — token minting from z_at cookie is not yet implemented."
+                "HLS download rejected (403/401). Ensure z_at cookie is valid and "
+                "mediatoken can mint hdnts for the manifest URL."
             ) from exc
         raise AudioUnavailable(f"ffmpeg failed: {stderr.strip() or exc}") from exc
 
@@ -176,7 +308,7 @@ def download_audio(
     output_path.replace(output_final)
     return AudioDownloadResult(
         output_path=output_final,
-        manifest_url=manifest_url,
+        manifest_url=authorized_manifest,
         format=ext,
     )
 

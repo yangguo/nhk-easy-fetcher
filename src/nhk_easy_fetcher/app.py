@@ -5,7 +5,12 @@ from __future__ import annotations
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-from nhk_easy_fetcher.audio import AudioDownloadResult, download_audio, resolve_hls_url
+from nhk_easy_fetcher.audio import (
+    AudioDownloadResult,
+    authorize_manifest_url,
+    download_audio,
+    resolve_hls_url,
+)
 from nhk_easy_fetcher.auth import AuthProvider, CookieJarProvider, NoAuthProvider
 from nhk_easy_fetcher.client import HttpClient
 from nhk_easy_fetcher.config import AppConfig
@@ -256,7 +261,10 @@ class FetchApplication:
                         out_dir = self.store.article_dir(article.article_id, article.published_at)
                         out_dir.mkdir(parents=True, exist_ok=True)
                         if self.config.audio.mode == "manifest":
-                            manifest_url = resolve_hls_url(voice_uri)
+                            manifest_url = authorize_manifest_url(
+                                resolve_hls_url(voice_uri),
+                                cookies or {},
+                            )
                             manifest_body = client.get_text(manifest_url)
                             from nhk_easy_fetcher.audio import save_manifest_placeholder
 
@@ -283,7 +291,10 @@ class FetchApplication:
                         audio_error = str(exc)
                         article.audio = AudioInfo(
                             status="unavailable",
-                            manifest_url=resolve_hls_url(voice_uri),
+                            manifest_url=authorize_manifest_url(
+                                resolve_hls_url(voice_uri),
+                                cookies or {},
+                            ),
                         )
                         audio_failed = True
 

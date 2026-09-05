@@ -6,5 +6,6 @@
 - Page mode: `next_partial`
 - Selector presence (`.article-title`, `.article-date`, `#js-article-body`): false / false / false
 - Authorization mode: none (anonymous fetch)
-- Audio metadata availability: not tested (requires authorized session)
-- Result: Sitemap discovery works anonymously. Article pages return NHK ONE consent shell without `#js-article-body`. Full export requires `cookie_jar` auth with user-owned NHK ONE consent cookies.
+- Audio metadata availability: not tested without hdnts token (bare CDN returns 403)
+- HLS base URL verified: `https://media.vd.st.nhk/news/easy_audio/{stem}/index.m3u8`
+- Result: Sitemap discovery works anonymously. Article pages return NHK ONE consent shell without `#js-article-body`. Full export requires `cookie_jar` auth with NHK ONE consent cookies. Audio CDN requires Akamai `hdnts` token (TODO: mint from `z_at`).

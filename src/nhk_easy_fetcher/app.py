@@ -14,7 +14,7 @@ from nhk_easy_fetcher.audio import (
 from nhk_easy_fetcher.auth import AuthProvider, CookieJarProvider, NoAuthProvider
 from nhk_easy_fetcher.client import HttpClient
 from nhk_easy_fetcher.config import AppConfig
-from nhk_easy_fetcher.discovery import discover_article_urls
+from nhk_easy_fetcher.discovery import discover_article_urls, in_date_range
 from nhk_easy_fetcher.errors import (
     AudioUnavailable,
     AuthorizationUnavailable,
@@ -88,6 +88,8 @@ class FetchApplication:
         self,
         *,
         target_date: date | None = None,
+        since: date | None = None,
+        until: date | None = None,
         latest: bool = False,
         max_articles: int = 1,
         formats: str = "markdown,json,text",
@@ -135,6 +137,9 @@ class FetchApplication:
                         for c in candidates
                         if c.published_date and c.published_date.date() == target_date
                     ]
+                candidates = [
+                    c for c in candidates if in_date_range(c.published_date, since, until)
+                ]
                 candidates = candidates[:max_articles]
 
                 for candidate in candidates:
@@ -155,6 +160,7 @@ class FetchApplication:
                     for c in candidates
                     if c.published_date and c.published_date.date() == target_date
                 ]
+            candidates = [c for c in candidates if in_date_range(c.published_date, since, until)]
             candidates = candidates[:max_articles]
 
             if not candidates:

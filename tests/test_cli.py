@@ -92,6 +92,51 @@ def test_hls_url_uses_media_vd_st_nhk() -> None:
     assert "vod-stream.nhk.jp" not in url
 
 
+def test_date_and_since_are_mutually_exclusive(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["fetch", "--date", "2026-09-04", "--since", "2026-09-01", "--output", str(tmp_path)],
+    )
+    assert result.exit_code == 2
+    assert "mutually exclusive" in (result.stdout + result.stderr)
+
+
+def test_invalid_since_exits_2(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["fetch", "--since", "not-a-date", "--output", str(tmp_path)],
+    )
+    assert result.exit_code == 2
+    assert "Invalid --since date" in (result.stdout + result.stderr)
+
+
+def test_since_after_until_exits_2(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["fetch", "--since", "2026-09-05", "--until", "2026-09-01", "--output", str(tmp_path)],
+    )
+    assert result.exit_code == 2
+    assert "is after --until" in (result.stdout + result.stderr)
+
+
+def test_latest_and_date_filter_are_mutually_exclusive(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["fetch", "--latest", "--since", "2026-09-01", "--output", str(tmp_path)],
+    )
+    assert result.exit_code == 2
+    assert "cannot be combined" in (result.stdout + result.stderr)
+
+
+def test_max_articles_must_be_positive(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["fetch", "--max-articles", "-1", "--output", str(tmp_path)],
+    )
+    assert result.exit_code == 2
+    assert "at least 1" in (result.stdout + result.stderr)
+
+
 def test_version_option_works_without_a_subcommand() -> None:
     result = runner.invoke(app, ["--version"])
 

@@ -97,32 +97,47 @@ def mint_hdnts_token(
     manifest_url: str,
     z_at: str,
     *,
-    post_json: Callable[..., httpx.Response] | None = None,
+    get_json: Callable[..., httpx.Response] | None = None,
 ) -> str:
-    """Mint an Akamai hdnts token for a manifest URL using the NHK mediatoken service."""
-    poster = post_json or httpx.post
-    response = poster(
-        MEDIATOKEN_URL,
-        json={"url": manifest_url},
-        headers={
-            "Authorization": f"Bearer {z_at}",
-            "Content-Type": "application/json",
-            "User-Agent": DEFAULT_USER_AGENT,
-        },
-        timeout=20,
-    )
+    """Mint an Akamai hdnts token for a manifest URL using the NHK mediatoken service.
+
+    Live-verified 2026-09-05: the endpoint is ``GET /v1/token?url={manifest}``
+    with ``Authorization: Bearer {z_at}``; POST with a JSON body is rejected
+    with 403 even from a real browser session.
+    """
+    getter = get_json or httpx.get
+    try:
+        response = getter(
+            MEDIATOKEN_URL,
+            params={"url": manifest_url},
+            headers={
+                "Authorization": f"Bearer {z_at}",
+                "Origin": "https://news.web.nhk",
+                "Referer": "https://news.web.nhk/news/easy/",
+                "User-Agent": DEFAULT_USER_AGENT,
+            },
+            timeout=20,
+        )
+    except httpx.HTTPError as exc:
+        raise AudioUnavailable(f"mediatoken request failed: {exc}") from exc
     if response.status_code in {401, 403}:
         raise AudioUnavailable("mediatoken rejected authorization (check z_at cookie)")
     if response.status_code >= 400:
         raise AudioUnavailable(f"mediatoken HTTP {response.status_code}")
-    return _parse_mediatoken_response(response.json())
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise AudioUnavailable("mediatoken returned invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise AudioUnavailable("mediatoken returned invalid JSON")
+    return _parse_mediatoken_response(payload)
 
 
 def authorize_manifest_url(
     manifest_url: str,
     cookies: dict[str, str],
     *,
-    post_json: Callable[..., httpx.Response] | None = None,
+    get_json: Callable[..., httpx.Response] | None = None,
 ) -> str:
     """Return a manifest URL with hdnts appended, minting via mediatoken when needed."""
     parsed = urlparse(manifest_url)
@@ -132,7 +147,7 @@ def authorize_manifest_url(
     if not hdnts:
         z_at = cookies.get("z_at")
         if z_at:
-            hdnts = mint_hdnts_token(manifest_url, z_at, post_json=post_json)
+            hdnts = mint_hdnts_token(manifest_url, z_at, get_json=get_json)
     return append_hdnts_token(manifest_url, hdnts)
 
 
@@ -157,11 +172,11 @@ def prepare_ffmpeg_manifest_input(
     cookies: dict[str, str],
     *,
     output_dir: Path,
-    post_json: Callable[..., httpx.Response] | None = None,
+    get_json: Callable[..., httpx.Response] | None = None,
 ) -> tuple[str, bool]:
     """Return ffmpeg manifest input and whether it is a remote URL."""
     if is_remote_manifest(manifest_url):
-        authorized = authorize_manifest_url(manifest_url, cookies, post_json=post_json)
+        authorized = authorize_manifest_url(manifest_url, cookies, get_json=get_json)
         return authorized, True
 
     manifest_path = Path(manifest_url)
@@ -286,6 +301,9 @@ def build_ffmpeg_download_args(
         args.extend(["-b:a", "64k"])
     elif mode == "mp3":
         args.extend(["-b:a", "128k"])
+    # Output is a `.partial` temp file, so ffmpeg cannot infer the muxer
+    # from the extension — state it explicitly (renamed on success).
+    args.extend(["-f", "mp4" if mode == "m4a" else "mp3"])
     args.append(str(output_path))
     return args
 
@@ -299,7 +317,7 @@ def download_audio(
     cookies: dict[str, str] | None = None,
     manifest_url: str | None = None,
     runner: CommandRunner | None = None,
-    post_json: Callable[..., httpx.Response] | None = None,
+    get_json: Callable[..., httpx.Response] | None = None,
 ) -> AudioDownloadResult:
     if mode not in {"m4a", "mp3", "manifest"}:
         raise AudioUnavailable(f"unsupported audio mode: {mode}")
@@ -309,7 +327,7 @@ def download_audio(
     authorized_manifest = authorize_manifest_url(
         base_manifest,
         cookie_map,
-        post_json=post_json,
+        get_json=get_json,
     )
 
     _, ext = ffmpeg_audio_codec(mode if mode != "manifest" else "m4a")
@@ -335,7 +353,7 @@ def download_audio(
             base_manifest,
             cookie_map,
             output_dir=output_dir,
-            post_json=post_json,
+            get_json=get_json,
         )
 
     headers = build_ffmpeg_headers(cookies=cookie_map)

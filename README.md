@@ -52,6 +52,19 @@ nhk-easy probe
 NHK_EASY_LIVE_TEST=1 nhk-easy probe --live --i-understand-live-requests --json
 ```
 
+### One-click latest (text + audio)
+
+```console
+./scripts/fetch-latest.sh
+OUTPUT_DIR=~/NHK-Easy AUDIO_MODE=m4a COOKIE_JAR=~/.nhk-easy-fetcher/auth/cookies.json ./scripts/fetch-latest.sh
+```
+
+The script checks `ffmpeg`, installs the package if needed, guides you to
+complete NHK ONE consent once in your own browser, enforces `chmod 600` on the
+cookie jar, then runs `fetch-latest --audio m4a`.
+
+首次运行会自动弹起本机 Chrome 供你点一次同意，回车即自动保存 cookie（需 `pip install -e '.[browser]'`，不下载新浏览器，不碰日常 profile）。
+
 ### Cookie jar format
 
 Save a permission-restricted file (`chmod 600`):
@@ -120,12 +133,35 @@ with `hdnts` on segment lines and opened with
 | Command | Description |
 | --- | --- |
 | `nhk-easy fetch --latest` | Fetch newest sitemap article |
-| `nhk-easy fetch-latest` | Alias for `fetch --latest` |
-| `nhk-easy fetch --date today` | Fetch articles for a date |
+| `nhk-easy fetch-latest` | Alias for `fetch --latest` (always 1 article) |
+| `nhk-easy fetch --latest --max-articles 10` | Fetch 10 newest articles |
+| `nhk-easy fetch --date today` | Fetch articles for a date (`today` or `YYYY-MM-DD`) |
+| `nhk-easy fetch --since 2026-09-01 --until 2026-09-05` | Fetch a date range (both ends inclusive) |
+| `nhk-easy fetch --since 2026-09-01` | Fetch everything from a date onward |
 | `nhk-easy fetch --audio m4a` | Download audio (needs auth + ffmpeg) |
+| `nhk-easy fetch --output /path/to/dir` | Write to a custom directory (default `~/NHK-Easy`) |
+| `nhk-easy fetch --dry-run` | Discover without writing files |
 | `nhk-easy status --output PATH` | Show local SQLite state |
 | `nhk-easy probe` | Offline fixture probe |
 | `nhk-easy probe --live` | Live sitemap + one-page structural probe |
+
+`--latest`, `--date`, and `--since`/`--until` select distinct modes and cannot
+be combined. `--max-articles` must be positive and
+caps any selection (latest, date, or range). Already-complete articles are
+skipped, so re-running a range only fetches what is missing.
+
+```console
+# Newest article with audio; first capture opens Chrome once for consent
+./scripts/fetch-latest.sh
+OUTPUT_DIR=~/NHK-Easy AUDIO_MODE=m4a ./scripts/fetch-latest.sh
+
+# Same via CLI (cookie jar already saved)
+nhk-easy fetch --latest --max-articles 10 --audio m4a --output ~/NHK-Easy
+
+# A date range with audio to a custom directory
+nhk-easy fetch --since 2026-09-01 --until 2026-09-05 \
+  --audio m4a --output /path/to/dir
+```
 
 ### Exit codes
 

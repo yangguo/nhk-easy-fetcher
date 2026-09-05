@@ -52,3 +52,7 @@ class AudioUnavailable(NhkEasyFetcherError):
 
 class LocalWriteFailed(NhkEasyFetcherError):
     """Failed to write local artifacts."""
+
+
+class BrowserUnavailable(NhkEasyFetcherError):
+    """Local browser automation unavailable (missing browser or driver lib)."""

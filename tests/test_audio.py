@@ -50,7 +50,7 @@ def test_append_hdnts_token() -> None:
 @respx.mock
 def test_z_at_cookies_mint_hdnts_via_mediatoken() -> None:
     manifest = "https://media.vd.st.nhk/news/easy_audio/voice-20260904de48127/index.m3u8"
-    route = respx.post("https://mediatoken.web.nhk/v1/token").respond(
+    route = respx.get("https://mediatoken.web.nhk/v1/token").respond(
         200,
         json={"token": "exp=1700000000~acl=/news/easy_audio/*"},
     )
@@ -58,7 +58,7 @@ def test_z_at_cookies_mint_hdnts_via_mediatoken() -> None:
     assert route.called
     request = route.calls[0].request
     assert request.headers["Authorization"] == "Bearer jwt-example"
-    assert json_body(request) == {"url": manifest}
+    assert request.url.params["url"] == manifest
     assert "hdnts=exp" in authorized
 
 
@@ -163,7 +163,7 @@ class FakeRunner:
 
 @respx.mock
 def test_download_audio_m4a_uses_remote_https_input(tmp_path: Path) -> None:
-    token = respx.post("https://mediatoken.web.nhk/v1/token").respond(
+    token = respx.get("https://mediatoken.web.nhk/v1/token").respond(
         200,
         json={"token": "exp=1700000000~acl=/news/easy_audio/*"},
     )
@@ -246,11 +246,29 @@ def test_mint_hdnts_token_raises_on_error_payload() -> None:
         "error": {"message": "invalid token"},
     }
 
-    def fake_post(*_args: object, **_kwargs: object) -> httpx.Response:
+    def fake_get(*_args: object, **_kwargs: object) -> httpx.Response:
         return response
 
     with pytest.raises(AudioUnavailable, match="mediatoken error"):
-        mint_hdnts_token("https://example.test/index.m3u8", "bad", post_json=fake_post)
+        mint_hdnts_token("https://example.test/index.m3u8", "bad", get_json=fake_get)
+
+
+def test_mint_hdnts_token_wraps_transport_failure() -> None:
+    def fake_get(*_args: object, **_kwargs: object) -> httpx.Response:
+        raise httpx.ConnectError("offline")
+
+    with pytest.raises(AudioUnavailable, match="mediatoken request failed"):
+        mint_hdnts_token("https://example.test/index.m3u8", "bad", get_json=fake_get)
+
+
+def test_mint_hdnts_token_rejects_invalid_json() -> None:
+    response = httpx.Response(200, text="not json")
+
+    def fake_get(*_args: object, **_kwargs: object) -> httpx.Response:
+        return response
+
+    with pytest.raises(AudioUnavailable, match="invalid JSON"):
+        mint_hdnts_token("https://example.test/index.m3u8", "bad", get_json=fake_get)
 
 
 def json_body(request: httpx.Request) -> dict[str, object]:

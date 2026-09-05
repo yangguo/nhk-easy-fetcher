@@ -31,3 +31,20 @@ def test_resolve_voice_uri_falls_back_to_top_list() -> None:
         resolve_voice_uri(article_id="20260904de48127", html="<html></html>", top_list_map=top_list)
         == "voice-20260904de48127.mp4"
     )
+
+
+def test_fetch_top_list_voice_map_uses_requested_url() -> None:
+    from nhk_easy_fetcher.metadata import fetch_top_list_voice_map
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.urls: list[str] = []
+
+        def get_text(self, url: str) -> str:
+            self.urls.append(url)
+            return '{"items": []}'
+
+    client = FakeClient()
+    fetch_top_list_voice_map(client, url="https://example.test/custom-top-list.json")
+
+    assert client.urls == ["https://example.test/custom-top-list.json"]

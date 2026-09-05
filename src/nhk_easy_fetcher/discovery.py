@@ -52,5 +52,17 @@ def discover_article_urls(
             )
         )
 
-    articles.sort(key=lambda item: item.article_id, reverse=True)
+    # IDs have two layouts (`neYYYY...` and `YYYYMMDDde...`); lexical ordering
+    # would put every legacy `ne` ID ahead of newer current-format IDs.
+    # Sort by the date derived above so `--latest` is chronological regardless
+    # of which ID layout the sitemap uses.
+    fallback_date = datetime.min.replace(tzinfo=ZoneInfo(tz))
+    articles.sort(
+        key=lambda item: (
+            item.published_date is not None,
+            item.published_date or fallback_date,
+            item.article_id,
+        ),
+        reverse=True,
+    )
     return articles

@@ -120,7 +120,10 @@ class FetchApplication:
             top_list_map: dict[str, str] | None = None
             if self.config.audio.mode != "off":
                 try:
-                    top_list_map = fetch_top_list_voice_map(client)
+                    top_list_map = fetch_top_list_voice_map(
+                        client,
+                        url=self.config.discovery.top_list_url,
+                    )
                 except AuthorizationUnavailable:
                     top_list_map = None
 
@@ -206,6 +209,16 @@ class FetchApplication:
             page_mode = detect_page_mode(html)
 
             if page_mode.value != "classic_complete":
+                if page_mode.value == "unknown":
+                    return FetchResult(
+                        article_id=article_id,
+                        source_url=source_url,
+                        status="source_contract_changed",
+                        message=(
+                            "Page mode is unknown (missing #js-article-body and known "
+                            "NHK ONE markers); inspect the source contract manually."
+                        ),
+                    )
                 if self.config.fetch.allow_partial:
                     return FetchResult(
                         article_id=article_id,
@@ -244,7 +257,10 @@ class FetchApplication:
                 )
                 if voice_uri is None and top_list_map is None:
                     try:
-                        top_list_map = fetch_top_list_voice_map(client)
+                        top_list_map = fetch_top_list_voice_map(
+                            client,
+                            url=self.config.discovery.top_list_url,
+                        )
                         voice_uri = resolve_voice_uri(
                             article_id=article_id,
                             html=html,
@@ -256,6 +272,7 @@ class FetchApplication:
                 if voice_uri is None:
                     audio_error = "news_easy_voice_uri not found in HTML or top-list.json"
                     article.audio = AudioInfo(status="unavailable")
+                    audio_failed = True
                 else:
                     try:
                         out_dir = self.store.article_dir(article.article_id, article.published_at)
@@ -287,14 +304,17 @@ class FetchApplication:
                             format=audio_result.format,
                             manifest_url=audio_result.manifest_url,
                         )
-                    except AudioUnavailable as exc:
+                    except (AudioUnavailable, AuthorizationUnavailable) as exc:
                         audio_error = str(exc)
+                        try:
+                            failure_manifest_url = resolve_hls_url(voice_uri)
+                        except AudioUnavailable:
+                            failure_manifest_url = None
                         article.audio = AudioInfo(
                             status="unavailable",
-                            manifest_url=authorize_manifest_url(
-                                resolve_hls_url(voice_uri),
-                                cookies or {},
-                            ),
+                            # The token may have failed to mint; retain only
+                            # the deterministic base URL in failure metadata.
+                            manifest_url=failure_manifest_url,
                         )
                         audio_failed = True
 

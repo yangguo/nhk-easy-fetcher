@@ -5,7 +5,8 @@ from __future__ import annotations
 import hashlib
 import os
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Generator, Iterable
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -22,6 +23,15 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(65536), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+@contextmanager
+def _open_connection(path: Path) -> Generator[sqlite3.Connection, None, None]:
+    connection = sqlite3.connect(path)
+    try:
+        yield connection
+    finally:
+        connection.close()
 
 
 def _atomic_write(path: Path, content: str | bytes) -> None:
@@ -49,7 +59,7 @@ class StateStore:
         self._init_db()
 
     def _init_db(self) -> None:
-        with sqlite3.connect(self.db_path) as conn:
+        with _open_connection(self.db_path) as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS articles (
@@ -83,7 +93,7 @@ class StateStore:
         return self.articles_root / "unknown" / article_id
 
     def should_fetch(self, article_id: str, formats: Iterable[str]) -> bool:
-        with sqlite3.connect(self.db_path) as conn:
+        with _open_connection(self.db_path) as conn:
             row = conn.execute(
                 "SELECT content_status FROM articles WHERE article_id = ?",
                 (article_id,),
@@ -106,7 +116,7 @@ class StateStore:
         return False
 
     def get_status(self, article_id: str) -> str | None:
-        with sqlite3.connect(self.db_path) as conn:
+        with _open_connection(self.db_path) as conn:
             row = conn.execute(
                 "SELECT content_status FROM articles WHERE article_id = ?",
                 (article_id,),
@@ -152,7 +162,7 @@ class StateStore:
         checksum_path = out_dir / "checksums.sha256"
         _atomic_write(checksum_path, "\n".join(checksum_lines) + "\n")
 
-        with sqlite3.connect(self.db_path) as conn:
+        with _open_connection(self.db_path) as conn:
             conn.execute("BEGIN")
             try:
                 conn.execute(
@@ -178,6 +188,19 @@ class StateStore:
                         """,
                         (article.article_id, kind, str(path), _sha256_file(path)),
                     )
+                # A forced refresh may request fewer formats than a previous
+                # run.  Do not leave old hashes registered as if they matched
+                # the newly fetched article.
+                existing_kinds = conn.execute(
+                    "SELECT kind FROM artifacts WHERE article_id = ?",
+                    (article.article_id,),
+                ).fetchall()
+                for (kind,) in existing_kinds:
+                    if kind not in written:
+                        conn.execute(
+                            "DELETE FROM artifacts WHERE article_id = ? AND kind = ?",
+                            (article.article_id, kind),
+                        )
                 conn.commit()
             except sqlite3.Error as exc:
                 conn.rollback()

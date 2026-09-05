@@ -87,7 +87,11 @@ class HttpClient:
                 return response.text
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
                 last_error = NetworkTransient(str(exc))
-            except (RemoteTransient, RateLimited) as exc:
+            except RateLimited:
+                # A 429 is an explicit server-side pacing signal.  Surface it
+                # immediately rather than multiplying the request pressure.
+                raise
+            except RemoteTransient as exc:
                 last_error = exc
             except AuthorizationUnavailable:
                 raise

@@ -75,7 +75,14 @@ class DiscoveredArticle(BaseModel):
 class FetchResult(BaseModel):
     article_id: str
     source_url: str
-    status: Literal["completed", "skipped", "authorization_required", "partial", "failed"]
+    status: Literal[
+        "completed",
+        "skipped",
+        "authorization_required",
+        "source_contract_changed",
+        "partial",
+        "failed",
+    ]
     message: str = ""
     output_dir: str | None = None
 
@@ -84,6 +91,7 @@ class RunSummary(BaseModel):
     completed: int = 0
     skipped: int = 0
     authorization_required: int = 0
+    source_contract_changed: int = 0
     partial: int = 0
     failed: int = 0
     results: list[FetchResult] = Field(default_factory=list)
@@ -96,6 +104,8 @@ class RunSummary(BaseModel):
             self.skipped += 1
         elif result.status == "authorization_required":
             self.authorization_required += 1
+        elif result.status == "source_contract_changed":
+            self.source_contract_changed += 1
         elif result.status == "partial":
             self.partial += 1
         else:
@@ -105,6 +115,8 @@ class RunSummary(BaseModel):
     def exit_code(self) -> int:
         if self.authorization_required > 0 and self.completed == 0:
             return 3
+        if self.source_contract_changed > 0 and self.completed == 0:
+            return 4
         if self.failed > 0 and self.completed == 0:
             return 1
         if self.partial > 0 or (self.failed > 0 and self.completed > 0):

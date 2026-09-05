@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import math
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -123,6 +125,9 @@ def authorize_manifest_url(
     post_json: Callable[..., httpx.Response] | None = None,
 ) -> str:
     """Return a manifest URL with hdnts appended, minting via mediatoken when needed."""
+    parsed = urlparse(manifest_url)
+    if parse_qs(parsed.query).get("hdnts"):
+        return manifest_url
     hdnts = extract_hdnts_from_cookies(cookies)
     if not hdnts:
         z_at = cookies.get("z_at")
@@ -193,6 +198,59 @@ def ffmpeg_audio_codec(mode: str) -> tuple[str, str]:
     if mode == "mp3":
         return "libmp3lame", "mp3"
     return "aac", "m4a"
+
+
+def _ffprobe_path(ffmpeg_path: str) -> str:
+    return str(Path(ffmpeg_path).with_name("ffprobe"))
+
+
+def validate_audio_output(
+    output_path: Path,
+    *,
+    ffprobe_path: str,
+    runner: CommandRunner,
+) -> None:
+    """Require a readable container with an audio stream and positive duration."""
+    args = [
+        ffprobe_path,
+        "-v",
+        "error",
+        "-select_streams",
+        "a:0",
+        "-show_entries",
+        "stream=codec_type:format=duration",
+        "-of",
+        "json",
+        str(output_path),
+    ]
+    try:
+        result = runner.run(args)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise AudioUnavailable(f"ffprobe failed: {exc}") from exc
+    if result.returncode != 0:
+        raise AudioUnavailable(f"ffprobe failed: {result.stderr.strip() or 'unknown error'}")
+    try:
+        payload = json.loads(result.stdout or "")
+    except (TypeError, ValueError) as exc:
+        raise AudioUnavailable("ffprobe returned invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise AudioUnavailable("ffprobe returned invalid JSON")
+
+    streams = payload.get("streams")
+    if not isinstance(streams, list) or not any(
+        isinstance(stream, dict) and stream.get("codec_type") == "audio" for stream in streams
+    ):
+        raise AudioUnavailable("ffprobe found no audio stream")
+    format_info = payload.get("format")
+    duration_value = format_info.get("duration") if isinstance(format_info, dict) else None
+    if not isinstance(duration_value, (str, int, float)):
+        raise AudioUnavailable("ffprobe returned an invalid audio duration")
+    try:
+        duration = float(duration_value)
+    except (TypeError, ValueError) as exc:
+        raise AudioUnavailable("ffprobe returned an invalid audio duration") from exc
+    if not math.isfinite(duration) or duration <= 0:
+        raise AudioUnavailable("ffprobe found a non-positive audio duration")
 
 
 def build_ffmpeg_download_args(
@@ -268,14 +326,17 @@ def download_audio(
             format="manifest",
         )
 
-    manifest_input, is_remote = prepare_ffmpeg_manifest_input(
-        base_manifest,
-        cookie_map,
-        output_dir=output_dir,
-        post_json=post_json,
-    )
-    if is_remote:
-        manifest_input = authorized_manifest
+    if is_remote_manifest(base_manifest):
+        # We already authorized the remote URL above.  Passing it directly
+        # avoids a second mediatoken request and preserves the signed URL.
+        manifest_input, is_remote = authorized_manifest, True
+    else:
+        manifest_input, is_remote = prepare_ffmpeg_manifest_input(
+            base_manifest,
+            cookie_map,
+            output_dir=output_dir,
+            post_json=post_json,
+        )
 
     headers = build_ffmpeg_headers(cookies=cookie_map)
     args = build_ffmpeg_download_args(
@@ -304,6 +365,12 @@ def download_audio(
 
     if not output_path.exists() or output_path.stat().st_size == 0:
         raise AudioUnavailable("ffmpeg produced an empty audio file")
+
+    validate_audio_output(
+        output_path,
+        ffprobe_path=_ffprobe_path(ffmpeg_path),
+        runner=proc_runner,
+    )
 
     output_path.replace(output_final)
     return AudioDownloadResult(

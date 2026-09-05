@@ -35,3 +35,14 @@ def test_article_id_to_date_current() -> None:
 def test_extract_article_id_current_format() -> None:
     url = "https://news.web.nhk/news/easy/20260904de48127/20260904de48127.html"
     assert extract_article_id(url) == "20260904de48127"
+
+
+def test_sorts_mixed_article_id_formats_by_published_date() -> None:
+    sitemap = """<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <url><loc>https://news.web.nhk/news/easy/ne2026090512345/ne2026090512345.html</loc></url>
+      <url><loc>https://news.web.nhk/news/easy/20260906de1/20260906de1.html</loc></url>
+    </urlset>"""
+
+    articles = discover_article_urls(sitemap)
+
+    assert [article.article_id for article in articles] == ["20260906de1", "ne2026090512345"]

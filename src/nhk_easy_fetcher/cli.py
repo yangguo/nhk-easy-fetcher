@@ -36,6 +36,7 @@ def _print_summary(summary: RunSummary, *, as_json: bool = False) -> None:
             "completed": summary.completed,
             "skipped": summary.skipped,
             "authorization_required": summary.authorization_required,
+            "source_contract_changed": summary.source_contract_changed,
             "partial": summary.partial,
             "failed": summary.failed,
             "results": [result.model_dump() for result in summary.results],
@@ -52,7 +53,8 @@ def _print_summary(summary: RunSummary, *, as_json: bool = False) -> None:
     console.print(table)
     console.print(
         f"completed={summary.completed} skipped={summary.skipped} "
-        f"auth_required={summary.authorization_required} partial={summary.partial} "
+        f"auth_required={summary.authorization_required} "
+        f"contract_changed={summary.source_contract_changed} partial={summary.partial} "
         f"failed={summary.failed}"
     )
 

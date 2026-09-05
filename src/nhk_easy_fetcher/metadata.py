@@ -49,10 +49,14 @@ def parse_top_list_voice_map(payload: str | dict[str, Any]) -> dict[str, str]:
     return mapping
 
 
-def fetch_top_list_voice_map(client: Any) -> dict[str, str]:
+def fetch_top_list_voice_map(
+    client: Any,
+    *,
+    url: str = TOP_LIST_URL,
+) -> dict[str, str]:
     """Fetch top-list.json; requires an authorized HTTP client session."""
     try:
-        text = client.get_text(TOP_LIST_URL)
+        text = client.get_text(url)
     except AuthorizationUnavailable:
         raise
     except Exception as exc:

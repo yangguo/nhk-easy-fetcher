@@ -16,6 +16,7 @@ from nhk_easy_fetcher.audio import (
     prepare_ffmpeg_manifest_input,
     resolve_hls_url,
     rewrite_local_manifest_with_hdnts,
+    validate_audio_output,
     validate_manifest,
 )
 from nhk_easy_fetcher.errors import AudioUnavailable
@@ -149,13 +150,20 @@ class FakeRunner:
 
     def run(self, args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
         self.calls.append(args)
+        if Path(args[0]).name == "ffprobe":
+            return subprocess.CompletedProcess(
+                args,
+                0,
+                '{"streams":[{"codec_type":"audio"}],"format":{"duration":"1"}}',
+                "",
+            )
         self.output_path.write_bytes(b"fake audio")
         return subprocess.CompletedProcess(args, 0, "", "")
 
 
 @respx.mock
 def test_download_audio_m4a_uses_remote_https_input(tmp_path: Path) -> None:
-    respx.post("https://mediatoken.web.nhk/v1/token").respond(
+    token = respx.post("https://mediatoken.web.nhk/v1/token").respond(
         200,
         json={"token": "exp=1700000000~acl=/news/easy_audio/*"},
     )
@@ -175,6 +183,7 @@ def test_download_audio_m4a_uses_remote_https_input(tmp_path: Path) -> None:
     ffmpeg_input = runner.calls[0][runner.calls[0].index("-i") + 1]
     assert ffmpeg_input.startswith("https://")
     assert "hdnts=" in ffmpeg_input
+    assert token.call_count == 1
 
 
 def test_download_audio_mp3_uses_lame(tmp_path: Path) -> None:
@@ -188,6 +197,46 @@ def test_download_audio_mp3_uses_lame(tmp_path: Path) -> None:
         runner=runner,
     )
     assert "libmp3lame" in runner.calls[0]
+
+
+class InvalidAudioRunner(FakeRunner):
+    def run(self, args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+        self.calls.append(args)
+        if Path(args[0]).name == "ffprobe":
+            return subprocess.CompletedProcess(
+                args,
+                0,
+                '{"streams":[],"format":{"duration":"1"}}',
+                "",
+            )
+        self.output_path.write_bytes(b"not an audio container")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+
+def test_download_audio_rejects_output_without_audio_stream(tmp_path: Path) -> None:
+    runner = InvalidAudioRunner(tmp_path / "audio.m4a.partial")
+
+    with pytest.raises(AudioUnavailable, match="audio stream"):
+        download_audio(
+            news_easy_voice_uri="voice-20260905.mp4",
+            output_dir=tmp_path,
+            mode="m4a",
+            cookies={"hdnts": "exp=123"},
+            runner=runner,
+        )
+
+
+def test_validate_audio_output_rejects_nonobject_probe_json(tmp_path: Path) -> None:
+    class ProbeRunner:
+        def run(self, args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(args, 0, "[]", "")
+
+    with pytest.raises(AudioUnavailable, match="invalid JSON"):
+        validate_audio_output(
+            tmp_path / "audio.m4a.partial",
+            ffprobe_path="ffprobe",
+            runner=ProbeRunner(),
+        )
 
 
 def test_mint_hdnts_token_raises_on_error_payload() -> None:

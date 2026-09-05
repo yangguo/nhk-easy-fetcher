@@ -1,3 +1,5 @@
+import gc
+import warnings
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -41,3 +43,33 @@ def test_exports_include_warning(tmp_path) -> None:
     assert "personal study only" in md
     txt = render_text(article)
     assert "タイトル" in txt
+
+
+def test_refetch_does_not_keep_old_unrequested_artifact_verified(tmp_path) -> None:
+    store = StateStore(tmp_path)
+    old_article = _sample_article()
+    store.save_complete(old_article, {"json", "markdown"})
+
+    new_article = old_article.model_copy(
+        update={
+            "title": TextView(
+                plain="新しいタイトル",
+                with_readings="新しいタイトル",
+                html_with_ruby="新しいタイトル",
+            )
+        }
+    )
+    store.save_complete(new_article, {"json"})
+
+    assert store.should_fetch(new_article.article_id, {"markdown"}) is True
+
+
+def test_state_store_closes_sqlite_connections(tmp_path) -> None:
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ResourceWarning)
+        store = StateStore(tmp_path)
+        store.should_fetch("ne2026090512345", {"json"})
+        del store
+        gc.collect()
+
+    assert not [warning for warning in caught if "unclosed database" in str(warning.message)]

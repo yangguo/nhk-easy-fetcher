@@ -1,7 +1,8 @@
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from nhk_easy_fetcher.article_ids import article_id_to_date, extract_article_id
-from nhk_easy_fetcher.discovery import discover_article_urls
+from nhk_easy_fetcher.discovery import discover_article_urls, in_date_range
 
 
 def test_keeps_only_easily_identified_article_urls(load_fixture) -> None:
@@ -46,3 +47,28 @@ def test_sorts_mixed_article_id_formats_by_published_date() -> None:
     articles = discover_article_urls(sitemap)
 
     assert [article.article_id for article in articles] == ["20260906de1", "ne2026090512345"]
+
+
+def _dt(day: int) -> datetime:
+    return datetime(2026, 9, day, tzinfo=ZoneInfo("Asia/Tokyo"))
+
+
+def test_in_date_range_is_inclusive_on_both_ends() -> None:
+    assert in_date_range(_dt(4), date(2026, 9, 4), date(2026, 9, 5)) is True
+    assert in_date_range(_dt(5), date(2026, 9, 4), date(2026, 9, 5)) is True
+
+
+def test_in_date_range_rejects_outside() -> None:
+    assert in_date_range(_dt(3), date(2026, 9, 4), date(2026, 9, 5)) is False
+    assert in_date_range(_dt(6), date(2026, 9, 4), date(2026, 9, 5)) is False
+
+
+def test_in_date_range_open_ends() -> None:
+    assert in_date_range(_dt(1), None, date(2026, 9, 5)) is True
+    assert in_date_range(_dt(30), date(2026, 9, 4), None) is True
+    assert in_date_range(_dt(1), None, None) is True
+
+
+def test_in_date_range_rejects_unknown_published_date() -> None:
+    assert in_date_range(None, date(2026, 9, 4), None) is False
+    assert in_date_range(None, None, None) is True

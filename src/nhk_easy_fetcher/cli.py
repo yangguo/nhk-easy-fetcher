@@ -12,7 +12,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from nhk_easy_fetcher import __version__
+from nhk_easy_fetcher import __version__, auth_capture
 from nhk_easy_fetcher.app import FetchApplication
 from nhk_easy_fetcher.client import HttpClient
 from nhk_easy_fetcher.config import load_config
@@ -66,6 +66,14 @@ def fetch_cmd(
         str | None,
         typer.Option("--date", help="YYYY-MM-DD or 'today'"),
     ] = None,
+    since_arg: Annotated[
+        str | None,
+        typer.Option("--since", help="Range start YYYY-MM-DD (inclusive)"),
+    ] = None,
+    until_arg: Annotated[
+        str | None,
+        typer.Option("--until", help="Range end YYYY-MM-DD (inclusive)"),
+    ] = None,
     latest: Annotated[
         bool,
         typer.Option("--latest", help="Fetch the newest article from the sitemap"),
@@ -113,6 +121,9 @@ def fetch_cmd(
     if audio not in {"off", "m4a", "mp3", "manifest"}:
         console.print(f"[red]Unknown audio mode: {audio}[/red]")
         raise typer.Exit(2)
+    if max_articles < 1:
+        console.print("[red]--max-articles must be at least 1[/red]")
+        raise typer.Exit(2)
     config.audio.mode = audio  # type: ignore[assignment]
 
     target_date: date | None = None
@@ -131,12 +142,38 @@ def fetch_cmd(
             console.print(f"[red]Invalid date: {date_arg}[/red]")
             raise typer.Exit(2) from None
 
-    if not latest and date_arg is None:
+    since: date | None = None
+    if since_arg is not None:
+        try:
+            since = date.fromisoformat(since_arg)
+        except ValueError:
+            console.print(f"[red]Invalid --since date: {since_arg}[/red]")
+            raise typer.Exit(2) from None
+    until: date | None = None
+    if until_arg is not None:
+        try:
+            until = date.fromisoformat(until_arg)
+        except ValueError:
+            console.print(f"[red]Invalid --until date: {until_arg}[/red]")
+            raise typer.Exit(2) from None
+    if target_date is not None and (since is not None or until is not None):
+        console.print("[red]--date and --since/--until are mutually exclusive[/red]")
+        raise typer.Exit(2)
+    if latest and (target_date is not None or since is not None or until is not None):
+        console.print("[red]--latest cannot be combined with date filters[/red]")
+        raise typer.Exit(2)
+    if since is not None and until is not None and since > until:
+        console.print(f"[red]--since {since} is after --until {until}[/red]")
+        raise typer.Exit(2)
+
+    if not latest and date_arg is None and since is None and until is None:
         latest = True
 
     application = FetchApplication(config)
     summary = application.fetch(
         target_date=target_date if not latest else None,
+        since=since,
+        until=until,
         latest=latest,
         max_articles=max_articles,
         formats=formats,
@@ -273,6 +310,37 @@ def probe_cmd(
         classic_mode = result["classic_fixture_mode"]
         partial_mode = result["partial_fixture_mode"]
         console.print(f"offline probe: classic={classic_mode} partial={partial_mode}")
+    raise typer.Exit(0)
+
+
+auth_app = typer.Typer(no_args_is_help=True, help="Browser consent cookie capture.")
+app.add_typer(auth_app, name="auth")
+
+
+@auth_app.command("capture")
+def auth_capture_cmd(
+    cookie_jar: Annotated[Path | None, typer.Option("--cookie-jar")] = None,
+    timeout: Annotated[float, typer.Option("--timeout")] = 300,
+    consent_url: Annotated[str, typer.Option("--consent-url")] = "https://news.web.nhk/news/easy/",
+) -> None:
+    """Open installed Chrome for consent, then auto-save the cookie jar."""
+    from nhk_easy_fetcher.config import load_config
+    from nhk_easy_fetcher.errors import AuthorizationUnavailable, BrowserUnavailable
+
+    config = load_config()
+    jar = (cookie_jar or config.auth.cookie_jar_path).expanduser().resolve()
+    if timeout <= 0:
+        console.print("--timeout must be greater than zero", style="red")
+        raise typer.Exit(2)
+    try:
+        saved = auth_capture.run_capture(jar, consent_url=consent_url, timeout_seconds=timeout)
+    except BrowserUnavailable as exc:
+        console.print(str(exc), style="red", markup=False)
+        raise typer.Exit(2) from None
+    except AuthorizationUnavailable as exc:
+        console.print(str(exc), style="red", markup=False)
+        raise typer.Exit(3) from None
+    console.print(f"Saved cookie jar to {saved}")
     raise typer.Exit(0)
 
 

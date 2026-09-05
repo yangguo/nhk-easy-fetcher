@@ -10,6 +10,26 @@ from nhk_easy_fetcher.article_ids import ARTICLE_URL_RE, article_id_to_date
 from nhk_easy_fetcher.models import DiscoveredArticle
 
 
+def in_date_range(
+    published: datetime | None,
+    since: date | None,
+    until: date | None,
+) -> bool:
+    """Check an article's published datetime against an inclusive date range.
+
+    Open ends (None) do not filter. An unknown published date only passes
+    when no range is active.
+    """
+    if since is None and until is None:
+        return True
+    if published is None:
+        return False
+    day = published.date()
+    if since is not None and day < since:
+        return False
+    return not (until is not None and day > until)
+
+
 def discover_article_urls(
     sitemap_xml: str,
     *,

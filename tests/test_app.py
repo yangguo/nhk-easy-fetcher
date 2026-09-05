@@ -63,7 +63,7 @@ def test_audio_authorization_failure_still_exports_text_as_partial(tmp_path: Pat
         respx.get(
             "https://news.web.nhk/news/easy/ne2026090512345/ne2026090512345.html"
         ).respond(200, text=classic)
-        token = respx.post("https://mediatoken.web.nhk/v1/token").respond(401)
+        token = respx.get("https://mediatoken.web.nhk/v1/token").respond(401)
 
         summary = app.fetch_latest()
 
@@ -71,6 +71,33 @@ def test_audio_authorization_failure_still_exports_text_as_partial(tmp_path: Pat
     assert summary.failed == 0
     assert token.call_count == 1
     assert list(tmp_path.rglob("article.json"))
+
+
+def test_fetch_since_until_filters_by_published_date(tmp_path: Path) -> None:
+    from datetime import date
+
+    sitemap = (Path(__file__).parent / "fixtures" / "easy_sitemap.xml").read_text()
+    classic = (Path(__file__).parent / "fixtures" / "classic_complete.html").read_text()
+
+    config = AppConfig()
+    config.storage.output_dir = tmp_path
+    config.fetch.min_interval_seconds = 0.01
+    app = FetchApplication(config, store=StateStore(tmp_path))
+
+    with respx.mock:
+        respx.get(config.discovery.sitemap_url).respond(200, text=sitemap)
+        respx.get(
+            "https://news.web.nhk/news/easy/ne2026090410000/ne2026090410000.html"
+        ).respond(200, text=classic)
+        respx.get(
+            "https://news.web.nhk/news/easy/20260904de48127/20260904de48127.html"
+        ).respond(200, text=classic)
+
+        summary = app.fetch(since=date(2026, 9, 4), until=date(2026, 9, 4), max_articles=10)
+
+    assert summary.completed == 2
+    assert summary.failed == 0
+    assert {r.article_id for r in summary.results} == {"ne2026090410000", "20260904de48127"}
 
 
 def test_missing_audio_metadata_still_exports_text_as_partial(tmp_path: Path) -> None:

@@ -92,6 +92,13 @@ def test_hls_url_uses_media_vd_st_nhk() -> None:
     assert "vod-stream.nhk.jp" not in url
 
 
+def test_version_option_works_without_a_subcommand() -> None:
+    result = runner.invoke(app, ["--version"])
+
+    assert result.exit_code == 0
+    assert (result.stdout + result.stderr).strip() == "0.1.0"
+
+
 def test_parser_accepts_current_article_id_format(load_fixture) -> None:
     article = parse_complete_article(
         load_fixture("classic_complete.html"),

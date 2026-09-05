@@ -26,6 +26,7 @@ app = typer.Typer(
     help="Fetch NHK NEWS WEB EASY articles for personal study. "
     "NHK content is for personal use only — do not redistribute.",
     no_args_is_help=True,
+    invoke_without_command=True,
 )
 console = Console(stderr=True)
 

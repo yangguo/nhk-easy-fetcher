@@ -17,6 +17,7 @@ v0.1 vertical slice (this release):
 - SQLite deduplication and atomic writes;
 - `CookieJarProvider` for user-owned NHK ONE session cookies;
 - offline test suite with synthetic fixtures.
+- optional Anki deck export from saved articles (`export-anki`).
 
 Full article text requires a valid NHK ONE authorization session. Anonymous fetches return the NHK ONE consent shell (no `#js-article-body`) and exit with code **3** (`authorization_required`).
 
@@ -47,6 +48,11 @@ nhk-easy fetch-latest \
 
 # Offline probe (fixtures only)
 nhk-easy probe
+
+# Export saved articles to an Anki deck (personal study only)
+pip install -e '.[anki]'   # once, for APKG support
+nhk-easy export-anki --output ~/NHK-Easy --deck nhk-easy
+nhk-easy export-anki ~/NHK-Easy/articles/2026/2026-09/2026-09-05_ne2026090512345 --include-audio
 
 # Live structural probe (opt-in; no content saved)
 NHK_EASY_LIVE_TEST=1 nhk-easy probe --live --i-understand-live-requests --json
@@ -146,6 +152,9 @@ with `hdnts` on segment lines and opened with
 | `nhk-easy cleanup [--output PATH] [--older-than DAYS] [--dry-run]` | Remove stale `.partial` temp files |
 | `nhk-easy probe` | Offline fixture probe |
 | `nhk-easy probe --live` | Live sitemap + one-page structural probe |
+| `nhk-easy export-anki` | Export saved complete articles to `.apkg` (alias: `anki`) |
+
+`export-anki` reads local `article.json` files only. Decks are written under `{output}/.nhk-easy-fetcher/anki/` unless `--output` ends in `.apkg`. Requires `pip install -e '.[anki]'`. NHK content in decks is for personal study — do not redistribute.
 
 `--latest`, `--date`, and `--since`/`--until` select distinct modes and cannot
 be combined. `--max-articles` must be positive and
@@ -190,6 +199,7 @@ mypy src
 - [Development specification](docs/development.md)
 - [Operations / scheduling guide](docs/operations.md)
 - [Implementation plan](docs/plans/2026-09-05-nhk-easy-fetcher-implementation.md)
+- [Anki export design](docs/plans/2026-09-06-anki-export.md)
 - [Reference notes](docs/references.md)
 - [Live contract verification (redacted)](docs/verification/2026-09-05-live-contract.md)
 

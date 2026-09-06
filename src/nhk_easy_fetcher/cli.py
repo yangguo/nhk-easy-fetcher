@@ -13,12 +13,19 @@ from rich.console import Console
 from rich.table import Table
 
 from nhk_easy_fetcher import __version__, auth_capture
+from nhk_easy_fetcher.anki_export import (
+    default_deck_path,
+    discover_article_dirs,
+    export_apkg,
+    load_article,
+)
 from nhk_easy_fetcher.app import FetchApplication
 from nhk_easy_fetcher.client import HttpClient
 from nhk_easy_fetcher.config import load_config
 from nhk_easy_fetcher.discovery import discover_article_urls
+from nhk_easy_fetcher.errors import AnkiExportError
 from nhk_easy_fetcher.maintenance import cleanup_partials, verify_output
-from nhk_easy_fetcher.models import RunSummary
+from nhk_easy_fetcher.models import ContentStatus, RunSummary
 from nhk_easy_fetcher.page_mode import detect_page_mode
 from nhk_easy_fetcher.storage import StateStore
 
@@ -355,6 +362,141 @@ def cleanup_cmd(
         for action in actions:
             console.print(f"{prefix}: {action.path} ({action.reason})")
 
+    raise typer.Exit(0)
+
+
+@app.command("export-anki", rich_help_panel="Export")
+@app.command("anki", rich_help_panel="Export")
+def export_anki_cmd(
+    article_dir: Annotated[
+        Path | None,
+        typer.Argument(help="Single saved article directory containing article.json"),
+    ] = None,
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", help="Output tree root or destination .apkg path"),
+    ] = None,
+    deck: Annotated[
+        str | None,
+        typer.Option("--deck", help="Anki deck name"),
+    ] = None,
+    export_format: Annotated[
+        str,
+        typer.Option("--format", help="Export format (apkg only)"),
+    ] = "apkg",
+    furigana: Annotated[
+        str,
+        typer.Option("--furigana", help="Front text mode: plain or readings"),
+    ] = "readings",
+    include_audio: Annotated[
+        bool,
+        typer.Option("--include-audio", help="Attach local audio.m4a/mp3 to first card"),
+    ] = False,
+    since_arg: Annotated[
+        str | None,
+        typer.Option("--since", help="Only export articles published on/after YYYY-MM-DD"),
+    ] = None,
+    until_arg: Annotated[
+        str | None,
+        typer.Option("--until", help="Only export articles published on/before YYYY-MM-DD"),
+    ] = None,
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Export locally saved complete articles to an Anki deck (.apkg).
+
+    NHK content is for personal study only — do not redistribute decks.
+    """
+    if export_format != "apkg":
+        console.print(f"[red]Unsupported export format: {export_format}[/red]")
+        raise typer.Exit(2)
+    if furigana not in {"plain", "readings"}:
+        console.print(f"[red]Unknown --furigana mode: {furigana}[/red]")
+        raise typer.Exit(2)
+
+    config = load_config()
+    deck_path: Path | None = None
+    output_root = config.storage.output_dir.expanduser().resolve()
+    if output is not None:
+        resolved_output = output.expanduser().resolve()
+        if resolved_output.suffix == ".apkg":
+            deck_path = resolved_output
+        else:
+            output_root = resolved_output
+
+    store = StateStore(output_root)
+
+    since: date | None = None
+    if since_arg is not None:
+        try:
+            since = date.fromisoformat(since_arg)
+        except ValueError:
+            console.print(f"[red]Invalid --since date: {since_arg}[/red]")
+            raise typer.Exit(2) from None
+    until: date | None = None
+    if until_arg is not None:
+        try:
+            until = date.fromisoformat(until_arg)
+        except ValueError:
+            console.print(f"[red]Invalid --until date: {until_arg}[/red]")
+            raise typer.Exit(2) from None
+    if since is not None and until is not None and since > until:
+        console.print(f"[red]--since {since} is after --until {until}[/red]")
+        raise typer.Exit(2)
+
+    if article_dir is not None:
+        resolved_article_dir = article_dir.expanduser().resolve()
+        if not resolved_article_dir.is_dir():
+            console.print(f"[red]Article directory not found: {resolved_article_dir}[/red]")
+            raise typer.Exit(2)
+        article_dirs = [resolved_article_dir]
+        default_deck_name = resolved_article_dir.name
+    else:
+        article_dirs = discover_article_dirs(
+            store.articles_root,
+            since=since,
+            until=until,
+        )
+        default_deck_name = "nhk-easy"
+
+    deck_name = deck or default_deck_name
+    if deck_path is None:
+        deck_path = default_deck_path(output_root, deck_name)
+
+    try:
+        if article_dir is not None:
+            article = load_article(article_dirs[0])
+            if article.content_status != ContentStatus.COMPLETE:
+                console.print(
+                    f"[red]Article {article.article_id} is not complete "
+                    f"(status={article.content_status.value})[/red]"
+                )
+                raise typer.Exit(2)
+        summary = export_apkg(
+            article_dirs,
+            deck_name=deck_name,
+            output_path=deck_path,
+            furigana=furigana,  # type: ignore[arg-type]
+            include_audio=include_audio,
+        )
+    except AnkiExportError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2) from None
+
+    if as_json:
+        payload = {
+            "deck_path": str(summary.deck_path),
+            "deck_name": summary.deck_name,
+            "article_count": summary.article_count,
+            "card_count": summary.card_count,
+            "articles": summary.articles,
+        }
+        console.print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        console.print(
+            f"Wrote {summary.card_count} cards from {summary.article_count} article(s) "
+            f"to {summary.deck_path}"
+        )
+        console.print("NHK content — personal study only, do not redistribute.")
     raise typer.Exit(0)
 
 

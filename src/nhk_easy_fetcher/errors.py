@@ -56,3 +56,7 @@ class LocalWriteFailed(NhkEasyFetcherError):
 
 class BrowserUnavailable(NhkEasyFetcherError):
     """Local browser automation unavailable (missing browser or driver lib)."""
+
+
+class AnkiExportError(NhkEasyFetcherError):
+    """Anki export failed due to missing input or invalid article state."""

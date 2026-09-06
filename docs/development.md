@@ -21,7 +21,8 @@ v0 成功的定义：在一次普通的本地运行中，工具能（1）发现�
 - 公开 API、Web UI、用户账户、云同步、SaaS、多人共享；
 - 把全文、图片或音频提交到 Git、Release、Pages、Actions artifact 或其他公开位置；
 - 绕过 NHK ONE 登录、同意、地区、付费、反爬或速率限制；
-- 自动翻译、Anki 生成、词典/LLM 功能（可在稳定后作为独立插件讨论）；
+- 自动翻译、词典/LLM 功能（可在稳定后作为独立插件讨论）；
+- Anki 生成已作为可选本地导出实现（`export-anki`）；仍不提供云同步或公开再分发；
 - 用数据库服务、Docker、队列等基础设施解决本地单用户问题。
 
 ## 2. 设计原则
@@ -279,6 +280,9 @@ nhk-easy status [--output PATH] [--json]
 nhk-easy verify [ARTICLE_DIR|--output PATH] [--audio]
 nhk-easy cleanup [--output PATH] [--older-than DAYS] [--dry-run]
 nhk-easy probe [--live] [--json]
+nhk-easy export-anki [ARTICLE_DIR] [--output PATH] [--deck NAME]
+               [--format apkg] [--furigana plain|readings]
+               [--include-audio] [--since YYYY-MM-DD] [--until YYYY-MM-DD]
 ```
 
 | 退出码 | 意义 |
@@ -471,6 +475,8 @@ README、每个导出 Markdown、CLI `--help` 和 Release 页面都应保持这�
 | 4 — 音频 | metadata resolver、ffmpeg/ffprobe、checksum | 一个合法可用样本端到端验证，不猜 URL。 |
 | 5 — 运行可靠性 | retry、状态、cleanup、local scheduler docs | 重跑幂等、失败可解释。`verify`/`cleanup` CLI、`docs/operations.md`、source-contract workflow 已落地。 |
 | 6 — 可选扩展 | Anki/RSS/词表/翻译插件 | 需单独设计和权限/版权评估。 |
+
+**Stage 6 (landed):** `nhk-easy export-anki` exports locally saved `complete` articles to `.apkg` decks (one card per paragraph, optional local audio). See [Anki export design](plans/2026-09-06-anki-export.md). RSS, vocabulary, and translation remain out of scope.
 
 ## 20. 开发前检查清单
 

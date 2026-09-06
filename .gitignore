@@ -20,6 +20,7 @@ nhk-easy-output/
 *.sqlite3-journal
 *.sqlite3-shm
 *.sqlite3-wal
+*.apkg
 
 # Editors and operating systems
 .DS_Store

@@ -17,6 +17,7 @@ from nhk_easy_fetcher.app import FetchApplication
 from nhk_easy_fetcher.client import HttpClient
 from nhk_easy_fetcher.config import load_config
 from nhk_easy_fetcher.discovery import discover_article_urls
+from nhk_easy_fetcher.maintenance import cleanup_partials, verify_output
 from nhk_easy_fetcher.models import RunSummary
 from nhk_easy_fetcher.page_mode import detect_page_mode
 from nhk_easy_fetcher.storage import StateStore
@@ -247,6 +248,113 @@ def status_cmd(
         for row in rows:
             table.add_row(row[0], row[1], row[2] or "")
         console.print(table)
+    raise typer.Exit(0)
+
+
+@app.command("verify")
+def verify_cmd(
+    article_dir: Annotated[
+        Path | None,
+        typer.Argument(help="Single article directory to verify"),
+    ] = None,
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", help="Verify all articles under this output tree"),
+    ] = None,
+    audio: Annotated[
+        bool,
+        typer.Option("--audio", help="Also validate audio files with ffprobe"),
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Validate local article artifacts and checksums."""
+    config = load_config()
+    out = (output or config.storage.output_dir).expanduser().resolve()
+
+    if article_dir is not None and output is not None:
+        console.print("[red]Pass either ARTICLE_DIR or --output, not both[/red]")
+        raise typer.Exit(2)
+
+    target_dir = article_dir.expanduser().resolve() if article_dir is not None else None
+    if target_dir is not None and not target_dir.is_dir():
+        console.print(f"[red]Not a directory: {target_dir}[/red]")
+        raise typer.Exit(2)
+
+    reports = verify_output(
+        out,
+        article_dir=target_dir,
+        check_audio=audio,
+        ffmpeg_path=config.audio.ffmpeg_path,
+    )
+
+    if not reports:
+        console.print("No article directories with checksums.sha256 found.")
+        raise typer.Exit(0)
+
+    if as_json:
+        payload = [
+            {
+                "article_dir": str(report.article_dir),
+                "ok": report.ok,
+                "issues": [
+                    {"path": str(issue.path), "message": issue.message} for issue in report.issues
+                ],
+            }
+            for report in reports
+        ]
+        console.print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        for report in reports:
+            status = "ok" if report.ok else "FAILED"
+            console.print(f"{report.article_dir}: {status}")
+            for issue in report.issues:
+                console.print(f"  - {issue.path.name}: {issue.message}")
+
+    if any(not report.ok for report in reports):
+        raise typer.Exit(1)
+    raise typer.Exit(0)
+
+
+@app.command("cleanup")
+def cleanup_cmd(
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", help="Output directory to clean"),
+    ] = None,
+    older_than: Annotated[
+        int | None,
+        typer.Option("--older-than", help="Only remove .partial files older than N days"),
+    ] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Remove stale .partial temp files from the output tree."""
+    if older_than is not None and older_than < 0:
+        console.print("[red]--older-than must be zero or positive[/red]")
+        raise typer.Exit(2)
+
+    config = load_config()
+    out = (output or config.storage.output_dir).expanduser().resolve()
+    actions = cleanup_partials(out, older_than_days=older_than, dry_run=dry_run)
+
+    if as_json:
+        payload = [
+            {
+                "path": str(action.path),
+                "reason": action.reason,
+                "removed": action.removed,
+                "dry_run": dry_run,
+            }
+            for action in actions
+        ]
+        console.print(json.dumps(payload, ensure_ascii=False, indent=2))
+    elif not actions:
+        console.print("No stale .partial files found.")
+    else:
+        prefix = "Would remove" if dry_run else "Removed"
+        for action in actions:
+            console.print(f"{prefix}: {action.path} ({action.reason})")
+
     raise typer.Exit(0)
 
 

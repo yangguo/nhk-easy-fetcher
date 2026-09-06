@@ -142,6 +142,8 @@ with `hdnts` on segment lines and opened with
 | `nhk-easy fetch --output /path/to/dir` | Write to a custom directory (default `~/NHK-Easy`) |
 | `nhk-easy fetch --dry-run` | Discover without writing files |
 | `nhk-easy status --output PATH` | Show local SQLite state |
+| `nhk-easy verify [ARTICLE_DIR] [--output PATH] [--audio]` | Validate checksums (optional ffprobe for audio) |
+| `nhk-easy cleanup [--output PATH] [--older-than DAYS] [--dry-run]` | Remove stale `.partial` temp files |
 | `nhk-easy probe` | Offline fixture probe |
 | `nhk-easy probe --live` | Live sitemap + one-page structural probe |
 
@@ -186,6 +188,7 @@ mypy src
 ## Documentation
 
 - [Development specification](docs/development.md)
+- [Operations / scheduling guide](docs/operations.md)
 - [Implementation plan](docs/plans/2026-09-05-nhk-easy-fetcher-implementation.md)
 - [Reference notes](docs/references.md)
 - [Live contract verification (redacted)](docs/verification/2026-09-05-live-contract.md)

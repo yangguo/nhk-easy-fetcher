@@ -408,7 +408,7 @@ auth_sessions(provider, expires_at, encrypted_or_permission_checked_path,
 nhk-easy fetch --date today --audio=m4a --output ~/NHK-Easy
 ```
 
-不内建常驻 daemon。若连续三次因授权或页面契约失败，调度入口应停止后续自动请求并提示人工检查，而不是无限重试。
+不内建常驻 daemon。若连续三次因授权或页面契约失败，调度入口应停止后续自动请求并提示人工检查，而不是无限重试。完整示例见 [operations.md](operations.md)。
 
 ### GitHub Actions
 
@@ -469,7 +469,7 @@ README、每个导出 Markdown、CLI `--help` 和 Release 页面都应保持这�
 | 2 — 无授权发现与解析 | sitemap、页面模式、经典页面 parser、导出 | 对 fixture/显式本地 HTML 完整可用。 |
 | 3 — 授权适配 | 可替换 provider、session cache、live contract gate | 合规审查后才能启用；变更即安全失败。 |
 | 4 — 音频 | metadata resolver、ffmpeg/ffprobe、checksum | 一个合法可用样本端到端验证，不猜 URL。 |
-| 5 — 运行可靠性 | retry、状态、cleanup、local scheduler docs | 重跑幂等、失败可解释。 |
+| 5 — 运行可靠性 | retry、状态、cleanup、local scheduler docs | 重跑幂等、失败可解释。`verify`/`cleanup` CLI、`docs/operations.md`、source-contract workflow 已落地。 |
 | 6 — 可选扩展 | Anki/RSS/词表/翻译插件 | 需单独设计和权限/版权评估。 |
 
 ## 20. 开发前检查清单

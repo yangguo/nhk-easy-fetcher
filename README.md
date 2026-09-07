@@ -73,7 +73,9 @@ cookie jar, then runs `fetch-latest --audio m4a`.
 
 ### Cookie jar format
 
-Save a permission-restricted file (`chmod 600`):
+Save a permission-restricted file (`chmod 600` on POSIX; on Windows the
+file relies on your user-profile ACLs, so keep it under your home
+directory and out of shared folders):
 
 ```json
 {
@@ -120,6 +122,39 @@ ffmpeg uses **re-encode** (`-c:a aac -b:a 64k` for M4A, `libmp3lame` for MP3), n
 with `hdnts` on segment lines and opened with
 `-protocol_whitelist file,http,https,tcp,tls,crypto`.
 
+## Synced lyrics (LRC)
+
+`scripts/make_lrc.py` aligns `article.json` sentences against `audio.m4a`
+with faster-whisper word timestamps and writes `audio.lrc` next to the audio
+file (same basename, so lyric-capable players auto-load it).
+
+```console
+pip install -e '.[lrc]'
+python scripts/make_lrc.py ~/NHK-Easy/articles
+python scripts/make_lrc.py ~/NHK-Easy/articles/2026/2026-09/2026-09-07_20260907de48812
+```
+
+Copy `audio.m4a` + `audio.lrc` to your phone and open them in Musicolet
+or AIMP for Spotify-style scrolling lyrics. An `audio.srt` with the
+same timestamps is written alongside for players with SRT support
+(in VLC use Subtitle > Add Subtitle File; same-basename auto-load is
+best-effort, and VLC does not support `.lrc`). `--no-srt` to skip. EASY audio normally skips
+the title, so the script drops the title line when it does not align with
+the audio.
+
+On some Windows machines the model fails to load with
+`mkl_malloc: failed to allocate memory`; the script already limits its own
+thread pools, and you can also fall back to a smaller model:
+
+```console
+set MKL_NUM_THREADS=2
+set OMP_NUM_THREADS=2
+python scripts/make_lrc.py ~/NHK-Easy/articles --model base
+```
+
+Generated lyrics inherit the article's content rights — personal study only,
+do not redistribute.
+
 ## Output layout
 
 ```text
@@ -131,6 +166,8 @@ with `hdnts` on segment lines and opened with
         ├── article.md
         ├── article.txt
         ├── audio.m4a               # when --audio m4a succeeds
+        ├── audio.lrc               # when scripts/make_lrc.py succeeds
+        ├── audio.srt               # alongside audio.lrc unless --no-srt
         └── checksums.sha256
 ```
 

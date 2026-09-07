@@ -71,25 +71,55 @@ def build_cookie_jar_payload(
 
 
 def write_cookie_jar(path: Path, payload: dict[str, Any]) -> Path:
-    """Atomically write the jar with 0700 parent dir and 0600 file perms."""
+    """Atomically write the jar with 0700 parent dir and 0600 file perms.
+
+    POSIX permission failures raise; on Windows (ACL-based, synthetic mode
+    bits) chmod is best-effort.
+    """
     import json
 
     target = path.expanduser()
     target.parent.mkdir(parents=True, exist_ok=True)
-    os.chmod(target.parent, 0o700)
+    if os.name != "nt":
+        os.chmod(target.parent, 0o700)
     descriptor, tmp_name = tempfile.mkstemp(
         prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
     )
     tmp = Path(tmp_name)
+    fd_open = True
     try:
-        os.fchmod(descriptor, 0o600)
+        # os.fchmod does not exist on Windows; fall back to chmod by path.
+        fchmod = getattr(os, "fchmod", None)
+        if fchmod is not None:
+            fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            fd_open = False
             json.dump(payload, handle, ensure_ascii=False, indent=2)
             handle.flush()
             os.fsync(handle.fileno())
+        if os.name == "nt":
+            try:
+                os.chmod(tmp, 0o600)
+            except OSError:
+                pass
+        else:
+            os.chmod(tmp, 0o600)
         os.replace(tmp, target)
-    finally:
+    except BaseException:
+        if fd_open:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
         tmp.unlink(missing_ok=True)
+        raise
+    if os.name == "nt":
+        try:
+            os.chmod(target, 0o600)
+        except OSError:
+            pass
+    else:
+        os.chmod(target, 0o600)
     return target
 
 

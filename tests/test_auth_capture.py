@@ -84,19 +84,29 @@ def test_write_cookie_jar_enforces_permissions(tmp_path: Path) -> None:
     out = write_cookie_jar(jar, {"cookies": {"a": "1"}, "headers": {}})
     assert out == jar.expanduser()
     assert json.loads(jar.read_text(encoding="utf-8"))["cookies"] == {"a": "1"}
-    assert oct(os.stat(jar).st_mode & 0o777) == "0o600"
+    if os.name != "nt":  # Windows chmod cannot express 0o600; files use ACLs instead
+        assert oct(os.stat(jar).st_mode & 0o777) == "0o600"
 
 
-def test_write_cookie_jar_does_not_follow_predictable_temp_symlink(tmp_path: Path) -> None:
+def test_write_cookie_jar_replaces_symlink_at_target(tmp_path: Path) -> None:
+    """mkstemp+replace must never follow a pre-existing symlink at the target."""
+    import json
+
     from nhk_easy_fetcher.auth_capture import write_cookie_jar
 
     victim = tmp_path / "victim.txt"
     victim.write_text("keep", encoding="utf-8")
-    (tmp_path / "cookies.tmp").symlink_to(victim)
+    link = tmp_path / "cookies.json"
+    try:
+        link.symlink_to(victim)
+    except OSError:
+        pytest.skip("creating symlinks requires extra privileges on this platform")
 
-    write_cookie_jar(tmp_path / "cookies.json", {"cookies": {"a": "1"}, "headers": {}})
+    out = write_cookie_jar(link, {"cookies": {"a": "1"}, "headers": {}})
 
     assert victim.read_text(encoding="utf-8") == "keep"
+    assert out.is_file() and not out.is_symlink()
+    assert json.loads(out.read_text(encoding="utf-8"))["cookies"] == {"a": "1"}
 
 
 class FakeContext:

@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -13,6 +14,10 @@ def test_no_auth_provider_never_invents_credentials() -> None:
     assert NoAuthProvider().get_session(now).cookies == {}
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows protects files via ACLs; the POSIX group/other check is skipped",
+)
 def test_cookie_jar_provider_refuses_world_readable_file(tmp_path: Path) -> None:
     cookie_file = tmp_path / "cookies.json"
     cookie_file.write_text('{"session": "abc"}', encoding="utf-8")

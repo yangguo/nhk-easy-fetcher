@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -47,7 +48,10 @@ class CookieJarProvider:
                 "Export browser cookies for news.web.nhk after completing NHK ONE consent."
             )
         mode = self._path.stat().st_mode
-        if mode & (stat.S_IRGRP | stat.S_IROTH | stat.S_IWGRP | stat.S_IWOTH):
+        # Windows reports synthetic POSIX mode bits (regular files show 0o666)
+        # and protects files via ACLs instead, so the group/other check only
+        # applies on POSIX platforms.
+        if os.name != "nt" and mode & (stat.S_IRGRP | stat.S_IROTH | stat.S_IWGRP | stat.S_IWOTH):
             raise InsecureCredentialStore(
                 f"Cookie jar {self._path} must not be world- or group-readable (chmod 600)"
             )

@@ -22,6 +22,8 @@ tmp-*/
 *.sqlite3-shm
 *.sqlite3-wal
 *.apkg
+*.lrc
+*.srt
 
 # Editors and operating systems
 .DS_Store

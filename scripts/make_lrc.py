@@ -1,7 +1,7 @@
 """Generate synced-lyrics files for fetched NHK EASY articles.
 
-Aligns each article's ``article.json`` sentences against its ``audio.m4a``
-with faster-whisper word timestamps, then writes ``audio.lrc`` next to the
+Aligns each article's ``article.json`` sentences against its ``audio.m4a`` or
+``audio.mp3`` with faster-whisper word timestamps, then writes ``audio.lrc`` next to the
 audio file (same basename, so lyric-capable players auto-load it) plus
 ``audio.srt`` for players without LRC support such as VLC
 (``--no-srt`` to skip).
@@ -33,7 +33,7 @@ import sys
 import unicodedata
 from pathlib import Path
 
-_SENT_RE = re.compile(r"[^。！？]*[。！？][」』）\"”’]*|[^。！？]+$")
+_SENT_RE = re.compile(r"[^。！？]*[。！？]+[」』）\"”’]*|[^。！？]+$")
 _STRIP_RE = re.compile(
     r"[\s、。，．・「」『』（）()［\]<>〈〉《》…‥—―～~"
     r"!！?？:：;；,，.．\"“”'‘’/／＼\\|｜+＋*＊#＃%％&＆@＠·]+"
@@ -47,7 +47,48 @@ def normalize(text: str) -> str:
 
 def split_sentences(text: str) -> list[str]:
     """Split Japanese text into sentences, keeping closing brackets."""
-    return [m.group(0) for m in _SENT_RE.finditer(text.strip()) if m.group(0).strip()]
+    return [
+        sentence
+        for match in _SENT_RE.finditer(text.strip())
+        if (sentence := match.group(0).strip()) and normalize(sentence)
+    ]
+
+
+def expand_path(value: str) -> Path:
+    """Expand a user path and make it absolute without requiring it to exist."""
+    return Path(value).expanduser().resolve()
+
+
+def find_audio_path(article_dir: Path, data: dict[str, object] | None = None) -> Path | None:
+    """Find supported article audio, preferring article.json's declared format."""
+    formats = ["m4a", "mp3"]
+    if data is not None:
+        audio = data.get("audio")
+        preferred = audio.get("format") if isinstance(audio, dict) else None
+        if isinstance(preferred, str) and preferred.lower() in formats:
+            preferred = preferred.lower()
+            formats = [preferred, *(item for item in formats if item != preferred)]
+    for audio_format in formats:
+        candidate = article_dir / f"audio.{audio_format}"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def discover_targets(root: Path) -> list[Path]:
+    """Return article.json files that have a supported local audio file."""
+    candidates = (
+        [root / "article.json"] if (root / "article.json").is_file() else root.rglob("article.json")
+    )
+    targets: list[Path] = []
+    for article_json in candidates:
+        try:
+            data = json.loads(article_json.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = None
+        if find_audio_path(article_json.parent, data if isinstance(data, dict) else None):
+            targets.append(article_json)
+    return sorted(targets)
 
 
 def fmt_lrc_time(seconds: float) -> str:
@@ -76,8 +117,9 @@ def write_lrc(
         "[ar:NHK NEWS WEB EASY]",
         f"[al:{article_id}]",
         "[by:nhk-easy-fetcher scripts/make_lrc.py + faster-whisper]",
+        "[comment:Personal study only - do not redistribute]",
     ]
-    total = duration if duration else (entries[-1][0] + 5.0 if entries else 0.0)
+    total = duration if duration is not None else (entries[-1][0] + 5.0 if entries else 0.0)
     lines.append(f"[length:{int(total // 60):02d}:{total % 60:05.2f}]")
     lines.extend(f"{fmt_lrc_time(start)}{text}" for start, text in entries)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -85,22 +127,27 @@ def write_lrc(
 
 
 def write_srt(path: Path, entries: list[tuple[float, str]], duration: float | None) -> Path:
+    cues = [(start, text) for start, text in entries if text]
+    limit = max(0.0, duration) if duration is not None else None
+    starts: list[float] = []
+    for start, _text in cues:
+        clamped = max(0.0, start)
+        if limit is not None:
+            clamped = min(clamped, limit)
+        if starts:
+            clamped = max(clamped, starts[-1])
+        starts.append(clamped)
+
     lines: list[str] = []
-    shown = 0
-    for i, (start, text) in enumerate(entries):
-        if not text:
-            continue
-        if i + 1 < len(entries):
-            end = entries[i + 1][0]
-        elif duration is not None:
-            end = duration
+    for i, ((_, text), start) in enumerate(zip(cues, starts)):
+        if i + 1 < len(starts):
+            end = starts[i + 1]
+        elif limit is not None:
+            end = limit
         else:
             end = start + 5.0
-        end = max(end, start + 1.0)
-        if duration is not None and duration >= start + 1.0:
-            end = min(end, duration)
-        shown += 1
-        lines += [str(shown), f"{fmt_srt_time(start)} --> {fmt_srt_time(end)}", text, ""]
+        end = max(start, end)
+        lines += [str(i + 1), f"{fmt_srt_time(start)} --> {fmt_srt_time(end)}", text, ""]
     path.write_text("\n".join(lines), encoding="utf-8")
     return path
 
@@ -139,16 +186,71 @@ def map_time(
     return t0 + frac * (t1 - t0)
 
 
+def interpolate_times(times: list[float | None], duration: float | None) -> list[float]:
+    """Clamp known times and spread unmatched runs into the available gaps."""
+    limit = max(0.0, duration) if duration is not None else None
+    result = [None if value is None else max(0.0, value) for value in times]
+    if limit is not None:
+        result = [None if value is None else min(value, limit) for value in result]
+
+    i = 0
+    while i < len(result):
+        if result[i] is not None:
+            i += 1
+            continue
+        run_start = i
+        while i < len(result) and result[i] is None:
+            i += 1
+        run_end = i
+        count = run_end - run_start
+        before = result[run_start - 1] if run_start else None
+        after = result[run_end] if run_end < len(result) else None
+        low = before if before is not None else 0.0
+        if after is not None:
+            high = max(low, after)
+        elif limit is not None:
+            high = max(low, limit)
+        else:
+            high = low + 0.01 * (count + 1)
+        step = (high - low) / (count + 1)
+        for offset in range(count):
+            result[run_start + offset] = low + step * (offset + 1)
+
+    return [value if value is not None else 0.0 for value in result]
+
+
+def monotonic_entries(
+    units: list[tuple[str, str]], times: list[float], duration: float | None
+) -> list[tuple[float, str]]:
+    """Clamp timestamps and omit lines that cannot have a unique timestamp."""
+    limit = max(0.0, duration) if duration is not None else None
+    entries: list[tuple[float, str]] = []
+    epsilon = 0.01
+    for (_, text), stamp in zip(units, times):
+        stamp = max(0.0, stamp)
+        if limit is not None:
+            stamp = min(stamp, limit)
+        if entries and stamp <= entries[-1][0]:
+            stamp = entries[-1][0] + epsilon
+        if limit is not None and stamp > limit:
+            continue
+        entries.append((stamp, text))
+    return entries
+
+
 def align(
     article_dir: Path, model: object, model_name: str, *, write_srt_file: bool = True
 ) -> Path | None:
     article_json = article_dir / "article.json"
-    audio_path = article_dir / "audio.m4a"
-    if not article_json.exists() or not audio_path.exists():
-        print(f"skip {article_dir.name}: missing article.json or audio.m4a", flush=True)
+    if not article_json.exists():
+        print(f"skip {article_dir.name}: missing article.json", flush=True)
         return None
 
     data = json.loads(article_json.read_text(encoding="utf-8"))
+    audio_path = find_audio_path(article_dir, data)
+    if audio_path is None:
+        print(f"skip {article_dir.name}: missing audio.m4a or audio.mp3", flush=True)
+        return None
     article_id = str(data.get("article_id", ""))
     title = (data.get("title") or {}).get("plain", "")
     paras = [p.get("plain", "") for p in data.get("paragraphs", []) if p.get("plain")]
@@ -171,9 +273,14 @@ def align(
         pos += len(norm)
 
     print(f"transcribing {audio_path.name} [{model_name}] ...", flush=True)
-    segments, _info = model.transcribe(  # type: ignore[attr-defined]
+    duration = audio_duration(audio_path)
+    segments, info = model.transcribe(  # type: ignore[attr-defined]
         str(audio_path), language="ja", beam_size=5, word_timestamps=True, vad_filter=True
     )
+    if duration is None:
+        info_duration = getattr(info, "duration", None)
+        if isinstance(info_duration, (int, float)) and info_duration >= 0:
+            duration = float(info_duration)
     words: list[tuple[float, float, str]] = []
     for seg in segments:
         for word in seg.words or []:
@@ -219,36 +326,14 @@ def align(
             times.pop(0)
             unit_spans.pop(0)
 
-    # Interpolate any sentence that failed to align between its neighbours.
-    count = len(units)
-    for i in range(count):
-        if times[i] is not None:
-            continue
-        prev_idx = max((j for j in range(i) if times[j] is not None), default=None)
-        next_idx = min((j for j in range(i + 1, count) if times[j] is not None), default=None)
-        prev = times[prev_idx] if prev_idx is not None else None
-        nxt = times[next_idx] if next_idx is not None else None
-        if prev is not None and nxt is not None and next_idx is not None and prev_idx is not None:
-            frac = (i - prev_idx) / (next_idx - prev_idx)
-            times[i] = prev + (nxt - prev) * frac
-        elif prev is not None:
-            times[i] = prev + 2.0
-        elif nxt is not None:
-            times[i] = max(0.0, nxt - 2.0)
-        else:
-            times[i] = 0.0
-        print(f"  warn: line {i} unaligned, interpolated t={times[i]:.2f}s", flush=True)
+    missing = [i for i, stamp in enumerate(times) if stamp is None]
+    filled_times = interpolate_times(times, duration)
+    for i in missing:
+        print(f"  warn: line {i} unaligned, interpolated t={filled_times[i]:.2f}s", flush=True)
 
-    for i in range(1, count):  # enforce monotonicity
-        cur, prev = times[i], times[i - 1]
-        if cur is not None and prev is not None and cur < prev:
-            times[i] = prev
-
-    duration = audio_duration(audio_path)
-    entries: list[tuple[float, str]] = []
-    for (_, text), stamp in zip(units, times):
-        assert stamp is not None, "interpolation must fill every timestamp"
-        entries.append((stamp, text))
+    entries = monotonic_entries(units, filled_times, duration)
+    if len(entries) < len(units):
+        print("  warn: dropped lines without room for unique timestamps", flush=True)
     if not entries:
         print(f"  FAIL {article_dir.name}: no aligned lines", flush=True)
         return None
@@ -257,7 +342,7 @@ def align(
         write_srt(article_dir / "audio.srt", entries, duration)
     first = entries[0][0] if entries else 0.0
     last = entries[-1][0] if entries else 0.0
-    extra = f" duration={duration:.1f}s" if duration else ""
+    extra = f" duration={duration:.1f}s" if duration is not None else ""
     print(
         f"  wrote {out.name}: {len(entries)} lines, first={first:.2f}s last={last:.2f}s{extra}",
         flush=True,
@@ -285,6 +370,13 @@ def main(argv: list[str] | None = None) -> int:
         os.environ.setdefault("OMP_NUM_THREADS", "2")
         os.environ.setdefault("KMP_AFFINITY", "disabled")
 
+    root = expand_path(args.path)
+    targets = discover_targets(root)
+    if not targets:
+        print(f"no articles with audio found under {root}", file=sys.stderr)
+        return 2
+    print(f"found {len(targets)} article(s) with audio", flush=True)
+
     try:
         from faster_whisper import WhisperModel
     except ImportError:
@@ -292,17 +384,16 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     print(f"loading whisper model '{args.model}' (first run downloads it) ...", flush=True)
-    model = WhisperModel(args.model, device="cpu", compute_type="int8")
-
-    root = Path(args.path)
-    if (root / "article.json").exists():
-        targets = [root / "article.json"]
-    else:
-        targets = sorted(p for p in root.rglob("article.json") if (p.parent / "audio.m4a").exists())
-    if not targets:
-        print(f"no articles with audio found under {root}", file=sys.stderr)
-        return 2
-    print(f"found {len(targets)} article(s) with audio", flush=True)
+    try:
+        model = WhisperModel(args.model, device="cpu", compute_type="int8")
+    except Exception as exc:  # noqa: BLE001 - native model loaders raise varied errors
+        print(f"failed to load whisper model: {exc}", file=sys.stderr)
+        print(
+            "If this mentions mkl_malloc, limit threads with MKL_NUM_THREADS=2 "
+            "and OMP_NUM_THREADS=2, or try --model base.",
+            file=sys.stderr,
+        )
+        return 1
     done = 0
     for article_json in targets:
         try:

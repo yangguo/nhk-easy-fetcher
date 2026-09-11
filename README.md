@@ -124,9 +124,11 @@ with `hdnts` on segment lines and opened with
 
 ## Synced lyrics (LRC)
 
-`scripts/make_lrc.py` aligns `article.json` sentences against `audio.m4a`
+`scripts/make_lrc.py` aligns `article.json` sentences against `audio.m4a` or `audio.mp3`
 with faster-whisper word timestamps and writes `audio.lrc` next to the audio
-file (same basename, so lyric-capable players auto-load it).
+file (same basename, so lyric-capable players auto-load it). If both formats
+exist, the format recorded in `article.json` is preferred. Paths such as
+`~/NHK-Easy` are expanded before discovery.
 
 ```console
 pip install -e '.[lrc]'
@@ -134,8 +136,8 @@ python scripts/make_lrc.py ~/NHK-Easy/articles
 python scripts/make_lrc.py ~/NHK-Easy/articles/2026/2026-09/2026-09-07_20260907de48812
 ```
 
-Copy `audio.m4a` + `audio.lrc` to your phone and open them in Musicolet
-or AIMP for Spotify-style scrolling lyrics. An `audio.srt` with the
+Copy `audio.m4a` (or `audio.mp3`) + `audio.lrc` to your phone and open them in
+Musicolet or AIMP for Spotify-style scrolling lyrics. An `audio.srt` with the
 same timestamps is written alongside for players with SRT support
 (in VLC use Subtitle > Add Subtitle File; same-basename auto-load is
 best-effort, and VLC does not support `.lrc`). `--no-srt` to skip. EASY audio normally skips
@@ -165,7 +167,7 @@ do not redistribute.
         ├── article.json
         ├── article.md
         ├── article.txt
-        ├── audio.m4a               # when --audio m4a succeeds
+        ├── audio.m4a / audio.mp3   # when an audio fetch succeeds
         ├── audio.lrc               # when scripts/make_lrc.py succeeds
         ├── audio.srt               # alongside audio.lrc unless --no-srt
         └── checksums.sha256

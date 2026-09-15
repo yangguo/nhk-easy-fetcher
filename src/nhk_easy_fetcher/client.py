@@ -17,9 +17,16 @@ from nhk_easy_fetcher.errors import (
 )
 
 RETRYABLE_STATUS_CODES = {502, 503, 504}
+# NHK's edge (live-checked 2026-09-15) rejects non-browser User-Agents with 403,
+# and a browser UA alone is not enough: at least one standard browser header
+# (Accept / Accept-Language) must accompany it.  These are the minimal headers a
+# normal browser sends; no cookies or fingerprinting headers are added here.
 DEFAULT_USER_AGENT = (
-    "nhk-easy-fetcher/0.1.0 (+https://github.com/nhk-easy-fetcher; personal study tool)"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
 )
+DEFAULT_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+DEFAULT_ACCEPT_LANGUAGE = "ja,en-US;q=0.9,en;q=0.8"
 
 
 class HttpClient:
@@ -42,6 +49,8 @@ class HttpClient:
             ),
             headers={
                 "User-Agent": DEFAULT_USER_AGENT,
+                "Accept": DEFAULT_ACCEPT,
+                "Accept-Language": DEFAULT_ACCEPT_LANGUAGE,
                 **extra_headers,
             },
             cookies=cookies or {},

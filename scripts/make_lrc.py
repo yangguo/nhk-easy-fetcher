@@ -3,8 +3,14 @@
 Aligns each article's ``article.json`` sentences against its ``audio.m4a`` or
 ``audio.mp3`` with faster-whisper word timestamps, then writes ``audio.lrc`` next to the
 audio file (same basename, so lyric-capable players auto-load it) plus
-``audio.srt`` for players without LRC support such as VLC
-(``--no-srt`` to skip).
+``audio.srt`` for players without LRC support (``--no-srt`` to skip).
+
+VLC (desktop 3.x) loads same-basename SRT for audio files but then drops
+every subtitle frame because audio-only media has no video output window
+("no vout found, dropping subpicture"). For VLC, an ``audio.mkv`` is also
+muxed: the audio stream copied with the SRT embedded and a minimal
+still-video track so the subtitle renderer has something to draw on
+(``--no-mkv`` to skip; needs ``ffmpeg`` on PATH or ``NHK_EASY_FFMPEG_PATH``).
 
 Usage:
     pip install -e '.[lrc]'
@@ -29,6 +35,8 @@ import difflib
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import unicodedata
 from pathlib import Path
@@ -166,6 +174,71 @@ def audio_duration(path: Path) -> float | None:
     return None
 
 
+def resolve_ffmpeg() -> str | None:
+    """Return an ffmpeg executable: NHK_EASY_FFMPEG_PATH first, then PATH."""
+    env = os.environ.get("NHK_EASY_FFMPEG_PATH")
+    if env and Path(env).is_file():
+        return env
+    return shutil.which("ffmpeg")
+
+
+def build_mkv_mux_args(
+    ffmpeg_path: str, audio_path: Path, srt_path: Path, out_path: Path
+) -> list[str]:
+    """Build the ffmpeg command muxing audio + SRT into an MKV for VLC.
+
+    The audio stream is copied unchanged; the subtitle track is embedded as
+    SRT (Japanese, default) and a minimal still-video track is synthesized so
+    VLC creates the video output that sidecar subtitles for audio-only media
+    are otherwise dropped for.
+    """
+    return [
+        ffmpeg_path,
+        "-y",
+        "-f", "lavfi", "-i", "color=c=0x101418:s=480x360:r=2",
+        "-i", str(audio_path),
+        "-i", str(srt_path),
+        "-map", "1:a",
+        "-map", "0:v",
+        "-map", "2:s",
+        "-c:v", "libx264", "-preset", "ultrafast", "-tune", "stillimage",
+        "-crf", "30", "-r", "2", "-pix_fmt", "yuv420p",
+        "-c:a", "copy",
+        "-c:s", "srt",
+        "-metadata:s:s:0", "language=jpn",
+        "-disposition:s:0", "default",
+        "-shortest", str(out_path),
+    ]
+
+
+def mux_mkv(article_dir: Path, audio_path: Path) -> Path | None:
+    """Write audio.mkv (audio + embedded SRT) next to the sidecar files.
+
+    Returns the MKV path, or None when there is no SRT to embed, ffmpeg is
+    unavailable, or the mux fails — all non-fatal for the LRC workflow.
+    """
+    srt_path = article_dir / "audio.srt"
+    if not srt_path.is_file():
+        return None
+    ffmpeg_path = resolve_ffmpeg()
+    if ffmpeg_path is None:
+        print("  warn: ffmpeg not found, skipping audio.mkv", flush=True)
+        return None
+    out_path = article_dir / "audio.mkv"
+    args = build_mkv_mux_args(ffmpeg_path, audio_path, srt_path, out_path)
+    try:
+        completed = subprocess.run(args, capture_output=True, text=True, timeout=600)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"  warn: audio.mkv mux failed: {exc}", flush=True)
+        return None
+    if completed.returncode != 0 or not out_path.is_file():
+        stderr = (completed.stderr or "").strip().splitlines()
+        detail = stderr[-1] if stderr else "no output file"
+        print(f"  warn: audio.mkv mux failed: {detail}", flush=True)
+        return None
+    return out_path
+
+
 def map_time(
     a_idx: int, a2w: dict[int, int], sorted_a: list[int], char_time: list[float]
 ) -> float | None:
@@ -239,7 +312,12 @@ def monotonic_entries(
 
 
 def align(
-    article_dir: Path, model: object, model_name: str, *, write_srt_file: bool = True
+    article_dir: Path,
+    model: object,
+    model_name: str,
+    *,
+    write_srt_file: bool = True,
+    make_mkv: bool = True,
 ) -> Path | None:
     article_json = article_dir / "article.json"
     if not article_json.exists():
@@ -340,6 +418,9 @@ def align(
     out = write_lrc(article_dir / "audio.lrc", title, article_id, entries, duration)
     if write_srt_file:
         write_srt(article_dir / "audio.srt", entries, duration)
+    if make_mkv:
+        if mux_mkv(article_dir, audio_path) is not None:
+            print("  wrote audio.mkv: embedded subtitles for VLC", flush=True)
     first = entries[0][0] if entries else 0.0
     last = entries[-1][0] if entries else 0.0
     extra = f" duration={duration:.1f}s" if duration is not None else ""
@@ -359,6 +440,15 @@ def main(argv: list[str] | None = None) -> int:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Also write audio.srt for players without LRC support (default: on)",
+    )
+    parser.add_argument(
+        "--mkv",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Also mux audio.mkv (audio + embedded SRT + still video) for VLC, "
+            "which drops sidecar subtitles for audio-only files (default: on)"
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -397,7 +487,13 @@ def main(argv: list[str] | None = None) -> int:
     done = 0
     for article_json in targets:
         try:
-            if align(article_json.parent, model, args.model, write_srt_file=args.srt):
+            if align(
+                article_json.parent,
+                model,
+                args.model,
+                write_srt_file=args.srt,
+                make_mkv=args.mkv,
+            ):
                 done += 1
         except Exception as exc:  # noqa: BLE001 - report per-article and continue
             print(f"  FAIL {article_json.parent.name}: {exc}", flush=True)

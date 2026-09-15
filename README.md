@@ -139,10 +139,15 @@ python scripts/make_lrc.py ~/NHK-Easy/articles/2026/2026-09/2026-09-07_20260907d
 Copy `audio.m4a` (or `audio.mp3`) + `audio.lrc` to your phone and open them in
 Musicolet or AIMP for Spotify-style scrolling lyrics. An `audio.srt` with the
 same timestamps is written alongside for players with SRT support
-(in VLC use Subtitle > Add Subtitle File; same-basename auto-load is
-best-effort, and VLC does not support `.lrc`). `--no-srt` to skip. EASY audio normally skips
+(VLC does not support `.lrc`). `--no-srt` to skip. EASY audio normally skips
 the title, so the script drops the title line when it does not align with
 the audio.
+
+An `audio.mkv` is also muxed (audio stream copied + embedded SRT + a minimal
+still-video track) because VLC drops sidecar subtitles for audio-only files
+— it loads the SRT but has no video output to draw on. Play `audio.mkv` in
+VLC and the subtitles show automatically. Requires `ffmpeg` on PATH or
+`NHK_EASY_FFMPEG_PATH`; `--no-mkv` to skip.
 
 On some Windows machines the model fails to load with
 `mkl_malloc: failed to allocate memory`; the script already limits its own
@@ -170,6 +175,7 @@ do not redistribute.
         ├── audio.m4a / audio.mp3   # when an audio fetch succeeds
         ├── audio.lrc               # when scripts/make_lrc.py succeeds
         ├── audio.srt               # alongside audio.lrc unless --no-srt
+        ├── audio.mkv               # VLC-friendly mux (audio + embedded SRT)
         └── checksums.sha256
 ```
 

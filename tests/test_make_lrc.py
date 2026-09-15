@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -174,3 +175,79 @@ def test_align_uses_mp3_and_whisper_duration_offline(
     assert make_lrc.align(tmp_path, model, "fake", write_srt_file=False) == tmp_path / "audio.lrc"
     assert model.transcribed_path == str(audio_path)
     assert "[length:00:01.50]" in (tmp_path / "audio.lrc").read_text(encoding="utf-8")
+
+
+def test_build_mkv_mux_args_copies_audio_and_embeds_srt(
+    tmp_path: Path, make_lrc: ModuleType
+) -> None:
+    args = make_lrc.build_mkv_mux_args(
+        "ffmpeg", tmp_path / "audio.m4a", tmp_path / "audio.srt", tmp_path / "audio.mkv"
+    )
+
+    assert args[0] == "ffmpeg"
+    assert args[-1] == str(tmp_path / "audio.mkv")
+    assert "-c:a" in args and args[args.index("-c:a") + 1] == "copy"
+    assert "-c:s" in args and args[args.index("-c:s") + 1] == "srt"
+    assert "-c:v" in args and args[args.index("-c:v") + 1] == "libx264"
+    assert args[args.index("-disposition:s:0") + 1] == "default"
+    assert args[args.index("-metadata:s:s:0") + 1] == "language=jpn"
+    maps = [args[i + 1] for i, flag in enumerate(args) if flag == "-map"]
+    assert maps == ["1:a", "0:v", "2:s"]
+
+
+def test_resolve_ffmpeg_prefers_env_path(
+    tmp_path: Path, make_lrc: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = tmp_path / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+    fake.write_text("", encoding="utf-8")
+
+    monkeypatch.setenv("NHK_EASY_FFMPEG_PATH", str(fake))
+    assert make_lrc.resolve_ffmpeg() == str(fake)
+
+    monkeypatch.setenv("NHK_EASY_FFMPEG_PATH", str(tmp_path / "missing"))
+    monkeypatch.setattr(make_lrc.shutil, "which", lambda _name: None)
+    assert make_lrc.resolve_ffmpeg() is None
+
+
+def test_mux_mkv_skips_without_srt(tmp_path: Path, make_lrc: ModuleType) -> None:
+    audio_path = tmp_path / "audio.m4a"
+    audio_path.touch()
+    assert make_lrc.mux_mkv(tmp_path, audio_path) is None
+
+
+def test_mux_mkv_runs_ffmpeg_and_returns_output(
+    tmp_path: Path, make_lrc: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audio_path = tmp_path / "audio.m4a"
+    audio_path.touch()
+    (tmp_path / "audio.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nx\n", encoding="utf-8")
+    monkeypatch.setenv("NHK_EASY_FFMPEG_PATH", str(tmp_path / "missing"))
+    monkeypatch.setattr(make_lrc.shutil, "which", lambda _name: "ffmpeg")
+
+    def fake_run(args: list[str], **_kwargs: object) -> SimpleNamespace:
+        Path(args[-1]).touch()
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(make_lrc.subprocess, "run", fake_run)
+    assert make_lrc.mux_mkv(tmp_path, audio_path) == tmp_path / "audio.mkv"
+
+
+def test_mux_mkv_reports_failure_without_raising(
+    tmp_path: Path,
+    make_lrc: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    audio_path = tmp_path / "audio.m4a"
+    audio_path.touch()
+    (tmp_path / "audio.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nx\n", encoding="utf-8")
+    monkeypatch.setenv("NHK_EASY_FFMPEG_PATH", str(tmp_path / "missing"))
+    monkeypatch.setattr(make_lrc.shutil, "which", lambda _name: "ffmpeg")
+    monkeypatch.setattr(
+        make_lrc.subprocess,
+        "run",
+        lambda _args, **_kwargs: SimpleNamespace(returncode=1, stderr="boom\nlibx264 error"),
+    )
+
+    assert make_lrc.mux_mkv(tmp_path, audio_path) is None
+    assert "audio.mkv mux failed: libx264 error" in capsys.readouterr().out
